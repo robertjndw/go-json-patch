@@ -1,0 +1,267 @@
+package jsonpatch
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// Pointer represents a JSON Pointer as defined in RFC 6901.
+// It references a specific value within a JSON document.
+type Pointer struct {
+	tokens []string
+}
+
+// ParsePointer parses a JSON Pointer string (RFC 6901) into a Pointer.
+// The pointer must be empty or start with "/".
+func ParsePointer(s string) (Pointer, error) {
+	if s == "" {
+		return Pointer{}, nil
+	}
+	if s[0] != '/' {
+		return Pointer{}, fmt.Errorf("json pointer must start with '/': %q", s)
+	}
+
+	parts := strings.Split(s[1:], "/")
+	tokens := make([]string, len(parts))
+	for i, part := range parts {
+		tokens[i] = unescapePointerToken(part)
+	}
+	return Pointer{tokens: tokens}, nil
+}
+
+// String returns the JSON Pointer as a string.
+func (p Pointer) String() string {
+	if len(p.tokens) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, token := range p.tokens {
+		sb.WriteByte('/')
+		sb.WriteString(escapePointerToken(token))
+	}
+	return sb.String()
+}
+
+// IsRoot returns true if the pointer references the root of the document.
+func (p Pointer) IsRoot() bool {
+	return len(p.tokens) == 0
+}
+
+// Parent returns the pointer to the parent of the current target.
+func (p Pointer) Parent() Pointer {
+	if len(p.tokens) == 0 {
+		return p
+	}
+	return Pointer{tokens: p.tokens[:len(p.tokens)-1]}
+}
+
+// Last returns the last token of the pointer (the key or index of the target).
+func (p Pointer) Last() string {
+	if len(p.tokens) == 0 {
+		return ""
+	}
+	return p.tokens[len(p.tokens)-1]
+}
+
+// Append returns a new pointer with the given token appended.
+func (p Pointer) Append(token string) Pointer {
+	newTokens := make([]string, len(p.tokens)+1)
+	copy(newTokens, p.tokens)
+	newTokens[len(p.tokens)] = token
+	return Pointer{tokens: newTokens}
+}
+
+// IsPrefixOf returns true if p is a proper prefix of other.
+func (p Pointer) IsPrefixOf(other Pointer) bool {
+	if len(p.tokens) >= len(other.tokens) {
+		return false
+	}
+	for i, token := range p.tokens {
+		if token != other.tokens[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Evaluate resolves the pointer against a JSON document and returns the value.
+func (p Pointer) Evaluate(doc interface{}) (interface{}, error) {
+	current := doc
+	for _, token := range p.tokens {
+		switch node := current.(type) {
+		case map[string]interface{}:
+			val, ok := node[token]
+			if !ok {
+				return nil, fmt.Errorf("key %q not found in object", token)
+			}
+			current = val
+		case []interface{}:
+			idx, err := resolveArrayIndex(token, len(node))
+			if err != nil {
+				return nil, err
+			}
+			current = node[idx]
+		default:
+			return nil, fmt.Errorf("cannot index into %T with token %q", current, token)
+		}
+	}
+	return current, nil
+}
+
+// Set sets the value at the location referenced by the pointer in the document.
+// It returns the modified document.
+func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
+	if p.IsRoot() {
+		return value, nil
+	}
+
+	parent, err := p.Parent().Evaluate(doc)
+	if err != nil {
+		return nil, fmt.Errorf("parent path %q does not exist: %w", p.Parent().String(), err)
+	}
+
+	key := p.Last()
+
+	switch node := parent.(type) {
+	case map[string]interface{}:
+		node[key] = value
+		return doc, nil
+	case []interface{}:
+		if key == "-" {
+			// Append to the end of the array
+			newArr := append(node, value)
+			return p.Parent().replaceValue(doc, newArr)
+		}
+		idx, err := resolveArrayIndex(key, len(node)+1) // +1 because we can insert at the end
+		if err != nil {
+			return nil, err
+		}
+		if idx > len(node) {
+			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
+		}
+		// Insert at index
+		newArr := make([]interface{}, len(node)+1)
+		copy(newArr[:idx], node[:idx])
+		newArr[idx] = value
+		copy(newArr[idx+1:], node[idx:])
+		return p.Parent().replaceValue(doc, newArr)
+	default:
+		return nil, fmt.Errorf("cannot set value in %T", parent)
+	}
+}
+
+// Remove removes the value at the location referenced by the pointer.
+// It returns the modified document.
+func (p Pointer) Remove(doc interface{}) (interface{}, error) {
+	if p.IsRoot() {
+		return nil, fmt.Errorf("cannot remove root document")
+	}
+
+	parent, err := p.Parent().Evaluate(doc)
+	if err != nil {
+		return nil, fmt.Errorf("parent path %q does not exist: %w", p.Parent().String(), err)
+	}
+
+	key := p.Last()
+
+	switch node := parent.(type) {
+	case map[string]interface{}:
+		if _, ok := node[key]; !ok {
+			return nil, fmt.Errorf("key %q not found in object", key)
+		}
+		delete(node, key)
+		return doc, nil
+	case []interface{}:
+		idx, err := resolveArrayIndex(key, len(node))
+		if err != nil {
+			return nil, err
+		}
+		if idx >= len(node) {
+			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
+		}
+		newArr := make([]interface{}, 0, len(node)-1)
+		newArr = append(newArr, node[:idx]...)
+		newArr = append(newArr, node[idx+1:]...)
+		return p.Parent().replaceValue(doc, newArr)
+	default:
+		return nil, fmt.Errorf("cannot remove value from %T", parent)
+	}
+}
+
+// replaceValue replaces the value at this pointer's location within the document.
+func (p Pointer) replaceValue(doc interface{}, newValue interface{}) (interface{}, error) {
+	if p.IsRoot() {
+		return newValue, nil
+	}
+
+	parent, err := p.Parent().Evaluate(doc)
+	if err != nil {
+		return nil, err
+	}
+
+	key := p.Last()
+
+	switch node := parent.(type) {
+	case map[string]interface{}:
+		node[key] = newValue
+		return doc, nil
+	case []interface{}:
+		idx, err := resolveArrayIndex(key, len(node))
+		if err != nil {
+			return nil, err
+		}
+		node[idx] = newValue
+		return doc, nil
+	default:
+		return nil, fmt.Errorf("cannot replace value in %T", parent)
+	}
+}
+
+// resolveArrayIndex converts a JSON Pointer token to an array index.
+func resolveArrayIndex(token string, arrayLen int) (int, error) {
+	if token == "-" {
+		return arrayLen, nil
+	}
+	// Leading zeros are not allowed per RFC 6901
+	if len(token) > 1 && token[0] == '0' {
+		return 0, fmt.Errorf("array index must not have leading zeros: %q", token)
+	}
+	idx, err := strconv.Atoi(token)
+	if err != nil {
+		return 0, fmt.Errorf("invalid array index %q: %w", token, err)
+	}
+	if idx < 0 {
+		return 0, fmt.Errorf("array index must not be negative: %d", idx)
+	}
+	if idx >= arrayLen {
+		return 0, fmt.Errorf("array index %d out of bounds (length %d)", idx, arrayLen)
+	}
+	return idx, nil
+}
+
+// escapePointerToken encodes a token for use in a JSON Pointer string.
+// Per RFC 6901: ~ is escaped as ~0, / is escaped as ~1.
+func escapePointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	token = strings.ReplaceAll(token, "/", "~1")
+	return token
+}
+
+// unescapePointerToken decodes a token from a JSON Pointer string.
+// Per RFC 6901: ~1 is unescaped to /, ~0 is unescaped to ~.
+// Order matters: ~1 must be processed before ~0.
+func unescapePointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~1", "/")
+	token = strings.ReplaceAll(token, "~0", "~")
+	return token
+}
+
+// deepCopy creates a deep copy of a JSON-compatible value.
+func deepCopy(v interface{}) interface{} {
+	b, _ := json.Marshal(v)
+	var out interface{}
+	_ = json.Unmarshal(b, &out)
+	return out
+}
