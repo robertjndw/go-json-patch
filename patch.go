@@ -88,16 +88,28 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 
 	if pathRaw, ok := raw["path"]; ok {
 		o.hasPath = true
-		if err := json.Unmarshal(pathRaw, &o.Path); err != nil {
+		var pathValue interface{}
+		if err := json.Unmarshal(pathRaw, &pathValue); err != nil {
 			return fmt.Errorf("invalid \"path\" field: %w", err)
 		}
+		path, ok := pathValue.(string)
+		if !ok {
+			return fmt.Errorf("invalid \"path\" field: must be a string")
+		}
+		o.Path = path
 	}
 
 	if fromRaw, ok := raw["from"]; ok {
 		o.hasFrom = true
-		if err := json.Unmarshal(fromRaw, &o.From); err != nil {
+		var fromValue interface{}
+		if err := json.Unmarshal(fromRaw, &fromValue); err != nil {
 			return fmt.Errorf("invalid \"from\" field: %w", err)
 		}
+		from, ok := fromValue.(string)
+		if !ok {
+			return fmt.Errorf("invalid \"from\" field: must be a string")
+		}
+		o.From = from
 	}
 
 	if valRaw, ok := raw["value"]; ok {
