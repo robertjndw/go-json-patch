@@ -35,8 +35,29 @@ func CreatePatchFromValues(original, modified interface{}) Patch {
 // diff recursively computes the differences between two JSON values
 // and appends the corresponding operations to the patch.
 func diff(patch *Patch, path string, original, modified interface{}) {
-	if jsonEqual(original, modified) {
-		return
+	// Fast path for primitives — avoids reflect.DeepEqual overhead.
+	switch o := original.(type) {
+	case nil:
+		if modified == nil {
+			return
+		}
+	case bool:
+		if m, ok := modified.(bool); ok && o == m {
+			return
+		}
+	case float64:
+		if m, ok := modified.(float64); ok && o == m {
+			return
+		}
+	case string:
+		if m, ok := modified.(string); ok && o == m {
+			return
+		}
+	default:
+		// Composite types — fall through to structural comparison
+		if jsonEqual(original, modified) {
+			return
+		}
 	}
 
 	origObj, origIsObj := original.(map[string]interface{})

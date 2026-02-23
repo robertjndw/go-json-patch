@@ -227,15 +227,15 @@ func applyTest(doc interface{}, op Operation) (interface{}, error) {
 }
 
 // jsonEqual compares two JSON-compatible values for equality per RFC 6902 Section 4.6.
+// All callers are expected to pass values already produced by encoding/json
+// (i.e., numbers are float64, maps are map[string]interface{}, etc.).
 func jsonEqual(a, b interface{}) bool {
-	// Normalize through JSON round-trip to ensure consistent types
-	na := normalizeJSON(a)
-	nb := normalizeJSON(b)
-	return reflect.DeepEqual(na, nb)
+	return reflect.DeepEqual(a, b)
 }
 
 // normalizeJSON normalizes a value by round-tripping through JSON serialization.
 // This ensures consistent types (e.g., all numbers become float64).
+// Used by CreatePatchFromValues to normalize caller-supplied values.
 func normalizeJSON(v interface{}) interface{} {
 	b, err := json.Marshal(v)
 	if err != nil {
