@@ -493,6 +493,52 @@ func TestApply_AddWithDashStillWorks(t *testing.T) {
 	assertJSONEqual(t, `{"foo": [1, 2, 3]}`, string(result))
 }
 
+func TestApply_MissingOpIsRejected(t *testing.T) {
+	// RFC 6902 Section 4: operation objects MUST have exactly one "op" member.
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"path": "/foo", "value": "baz"}]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error for operation without op member")
+	}
+}
+
+func TestApply_NonStringOpRejected(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	tests := []struct {
+		name  string
+		patch string
+	}{
+		{"op as number", `[{"op": 123, "path": "/foo", "value": "x"}]`},
+		{"op as boolean", `[{"op": true, "path": "/foo", "value": "x"}]`},
+		{"op as null", `[{"op": null, "path": "/foo", "value": "x"}]`},
+		{"op as array", `[{"op": [], "path": "/foo", "value": "x"}]`},
+		{"op as object", `[{"op": {}, "path": "/foo", "value": "x"}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Apply(doc, []byte(tt.patch))
+			if err == nil {
+				t.Fatalf("expected error for non-string op: %s", tt.patch)
+			}
+		})
+	}
+}
+
+func TestApply_A13_InvalidPatchDocument(t *testing.T) {
+	// RFC 6902 Appendix A.13: A JSON Patch document that is not an array
+	// is an invalid patch document.
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`{"op": "add", "path": "/baz", "value": "qux"}`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error for patch document that is not an array")
+	}
+}
+
 // assertJSONEqual compares two JSON strings for semantic equality.
 func assertJSONEqual(t *testing.T, expected, actual string) {
 	t.Helper()

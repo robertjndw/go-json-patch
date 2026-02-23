@@ -79,9 +79,13 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 	}
 
 	if opRaw, ok := raw["op"]; ok {
-		var op string
-		if err := json.Unmarshal(opRaw, &op); err != nil {
+		var opValue interface{}
+		if err := json.Unmarshal(opRaw, &opValue); err != nil {
 			return fmt.Errorf("invalid \"op\" field: %w", err)
+		}
+		op, ok := opValue.(string)
+		if !ok {
+			return fmt.Errorf("invalid \"op\" field: must be a string")
 		}
 		o.Op = OpType(op)
 	}
@@ -217,6 +221,11 @@ func MarshalPatch(patch Patch) ([]byte, error) {
 
 // validateOperation checks that an operation has the required fields.
 func validateOperation(op Operation) error {
+	// All operations MUST have exactly one "op" member (RFC 6902 Section 4).
+	if op.Op == "" {
+		return fmt.Errorf("operation must contain a non-empty \"op\" member")
+	}
+
 	// All operations MUST have a "path" member (RFC 6902 Section 4).
 	if !op.hasPath {
 		return fmt.Errorf("%q operation must contain a \"path\" member", op.Op)
