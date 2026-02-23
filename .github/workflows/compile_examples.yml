@@ -1,0 +1,24 @@
+name: Compile Examples
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  compile-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.23
+          cache-dependency-path: "**/*.sum"
+      - name: Install dependencies
+        run: go mod download
+      - name: Compile examples
+        run: go build ./examples/...
