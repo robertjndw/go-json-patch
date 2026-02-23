@@ -2,6 +2,7 @@ package jsonpatch
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -401,6 +402,95 @@ func TestApply_TestWithNestedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// --- Targeted compliance tests ---
+
+func TestApply_MissingPathIsRejected(t *testing.T) {
+	// RFC 6902: every operation object MUST have exactly one "path" member.
+	tests := []struct {
+		name  string
+		patch string
+	}{
+		{"add without path", `[{"op": "add", "value": "x"}]`},
+		{"remove without path", `[{"op": "remove"}]`},
+		{"replace without path", `[{"op": "replace", "value": "x"}]`},
+		{"move without path", `[{"op": "move", "from": "/foo"}]`},
+		{"copy without path", `[{"op": "copy", "from": "/foo"}]`},
+		{"test without path", `[{"op": "test", "value": "bar"}]`},
+	}
+	doc := []byte(`{"foo": "bar"}`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Apply(doc, []byte(tt.patch))
+			if err == nil {
+				t.Fatalf("expected error for patch without path: %s", tt.patch)
+			}
+		})
+	}
+}
+
+func TestApply_MoveFromRootPointer(t *testing.T) {
+	// from:"" is the root pointer and must be accepted by validation.
+	// Moving root to a child is blocked by the prefix check (correctly),
+	// but the operation must not be rejected for a missing "from".
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "move", "from": "", "path": "/new"}]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error: root is a prefix of /new")
+	}
+	// The error must be about prefix, NOT about missing "from" member.
+	if got := err.Error(); !strings.Contains(got, "prefix") {
+		t.Fatalf("expected prefix error, got: %v", err)
+	}
+}
+
+func TestApply_CopyFromRootPointer(t *testing.T) {
+	// from:"" is the root pointer and must be accepted for copy.
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "copy", "from": "", "path": "/dup"}]`)
+
+	result, err := Apply(doc, patch)
+	if err != nil {
+		t.Fatalf("copy with from='' (root) should succeed: %v", err)
+	}
+	assertJSONEqual(t, `{"foo": "bar", "dup": {"foo": "bar"}}`, string(result))
+}
+
+func TestApply_DashTokenOnlyValidForAdd(t *testing.T) {
+	// The "-" token references the nonexistent element after the last array element.
+	// It is only valid as the final token for an "add" target path.
+	doc := []byte(`{"foo": [1, 2, 3]}`)
+
+	tests := []struct {
+		name  string
+		patch string
+	}{
+		{"test on /-", `[{"op": "test", "path": "/foo/-", "value": 3}]`},
+		{"replace on /-", `[{"op": "replace", "path": "/foo/-", "value": 99}]`},
+		{"remove on /-", `[{"op": "remove", "path": "/foo/-"}]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Apply(doc, []byte(tt.patch))
+			if err == nil {
+				t.Fatalf("expected error for %s: %s", tt.name, tt.patch)
+			}
+		})
+	}
+}
+
+func TestApply_AddWithDashStillWorks(t *testing.T) {
+	doc := []byte(`{"foo": [1, 2]}`)
+	patch := []byte(`[{"op": "add", "path": "/foo/-", "value": 3}]`)
+
+	result, err := Apply(doc, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, `{"foo": [1, 2, 3]}`, string(result))
 }
 
 // assertJSONEqual compares two JSON strings for semantic equality.

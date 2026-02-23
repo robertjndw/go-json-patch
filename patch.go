@@ -57,6 +57,13 @@ type Operation struct {
 	// Required for "move" and "copy" operations.
 	From string `json:"from,omitempty"`
 
+	// hasPath tracks whether the "path" key was present in the original JSON.
+	hasPath bool
+
+	// hasFrom tracks whether the "from" key was present in the original JSON,
+	// distinguishing between an absent key and an explicit empty string (root pointer).
+	hasFrom bool
+
 	// hasValue tracks whether the "value" key was present in the original JSON,
 	// distinguishing between an absent key and an explicit null.
 	hasValue bool
@@ -80,12 +87,14 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 	}
 
 	if pathRaw, ok := raw["path"]; ok {
+		o.hasPath = true
 		if err := json.Unmarshal(pathRaw, &o.Path); err != nil {
 			return fmt.Errorf("invalid \"path\" field: %w", err)
 		}
 	}
 
 	if fromRaw, ok := raw["from"]; ok {
+		o.hasFrom = true
 		if err := json.Unmarshal(fromRaw, &o.From); err != nil {
 			return fmt.Errorf("invalid \"from\" field: %w", err)
 		}
@@ -116,6 +125,7 @@ func NewOperation(op OpType, path string, value interface{}) (Operation, error) 
 	o := Operation{
 		Op:       op,
 		Path:     path,
+		hasPath:  true,
 		hasValue: true,
 	}
 	// Always marshal the value — json.Marshal(nil) produces "null", which is valid.
@@ -131,26 +141,31 @@ func NewOperation(op OpType, path string, value interface{}) (Operation, error) 
 // NewMoveOperation creates a new move Operation.
 func NewMoveOperation(from, path string) Operation {
 	return Operation{
-		Op:   OpMove,
-		Path: path,
-		From: from,
+		Op:      OpMove,
+		Path:    path,
+		From:    from,
+		hasPath: true,
+		hasFrom: true,
 	}
 }
 
 // NewCopyOperation creates a new copy Operation.
 func NewCopyOperation(from, path string) Operation {
 	return Operation{
-		Op:   OpCopy,
-		Path: path,
-		From: from,
+		Op:      OpCopy,
+		Path:    path,
+		From:    from,
+		hasPath: true,
+		hasFrom: true,
 	}
 }
 
 // NewRemoveOperation creates a new remove Operation.
 func NewRemoveOperation(path string) Operation {
 	return Operation{
-		Op:   OpRemove,
-		Path: path,
+		Op:      OpRemove,
+		Path:    path,
+		hasPath: true,
 	}
 }
 
@@ -190,6 +205,11 @@ func MarshalPatch(patch Patch) ([]byte, error) {
 
 // validateOperation checks that an operation has the required fields.
 func validateOperation(op Operation) error {
+	// All operations MUST have a "path" member (RFC 6902 Section 4).
+	if !op.hasPath {
+		return fmt.Errorf("%q operation must contain a \"path\" member", op.Op)
+	}
+
 	switch op.Op {
 	case OpAdd, OpReplace, OpTest:
 		if !op.HasValue() {
@@ -203,7 +223,7 @@ func validateOperation(op Operation) error {
 			return fmt.Errorf("invalid path: %w", err)
 		}
 	case OpMove, OpCopy:
-		if op.From == "" {
+		if !op.hasFrom {
 			return fmt.Errorf("%q operation must contain a \"from\" member", op.Op)
 		}
 		if _, err := ParsePointer(op.Path); err != nil {

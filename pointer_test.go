@@ -28,6 +28,10 @@ func TestParsePointer(t *testing.T) {
 		{"slash escape ~1", "/~1", false, "/~1"},
 		{"combined escape", "/~01", false, "/~01"},
 		{"missing leading slash", "foo", true, ""},
+		{"invalid escape ~2", "/~2", true, ""},
+		{"dangling tilde at end", "/foo~", true, ""},
+		{"invalid escape ~a", "/~a", true, ""},
+		{"tilde at end of multi-token", "/foo/bar~", true, ""},
 	}
 
 	for _, tt := range tests {

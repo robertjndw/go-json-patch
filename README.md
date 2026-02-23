@@ -13,7 +13,7 @@ go get github.com/robertjndw/go-json-patch
 - **Apply** a JSON Patch document to a target JSON document
 - **Create** a JSON Patch by diffing two JSON documents
 - Full support for all six RFC 6902 operations: `add`, `remove`, `replace`, `move`, `copy`, `test`
-- Proper JSON Pointer (RFC 6901) parsing with `~` and `/` escaping
+- Strict JSON Pointer (RFC 6901) parsing with `~` and `/` escaping and escape validation
 - Atomic patch application — if any operation fails, the entire patch is rejected
 - Handles `null` values, nested objects, and arrays correctly
 
@@ -122,10 +122,11 @@ patchJSON, _ := jsonpatch.MarshalPatch(patch)
 
 ## Specification Compliance
 
-This library implements the full RFC 6902 specification including:
+This library aims for strict RFC 6902 compliance including:
 
 - All operations from Section 4 (add, remove, replace, move, copy, test)
-- JSON Pointer (RFC 6901) path resolution with proper `~0` and `~1` escaping
+- Mandatory `path` member validation for all operations and `from` member validation for move/copy
+- JSON Pointer (RFC 6901) path resolution with proper `~0` and `~1` escaping and strict escape validation
 - Error handling per Section 5 (atomic patch application)
 - Array index handling including the `-` end-of-array append syntax
 - Deep equality comparison for the `test` operation per Section 4.6

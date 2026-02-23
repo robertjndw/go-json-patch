@@ -293,6 +293,69 @@ func TestDecodePatch(t *testing.T) {
 	}
 }
 
+func TestDecodePatch_NonStringPathRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"path as number", `[{"op":"remove","path":123}]`},
+		{"path as object", `[{"op":"add","path":{},"value":"x"}]`},
+		{"path as array", `[{"op":"test","path":[],"value":true}]`},
+		{"path as boolean", `[{"op":"replace","path":false,"value":1}]`},
+		{"path as null", `[{"op":"remove","path":null}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodePatch([]byte(tt.raw))
+			if err == nil {
+				t.Fatalf("expected DecodePatch to reject non-string path: %s", tt.raw)
+			}
+		})
+	}
+}
+
+func TestDecodePatch_NonStringFromRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"from as number", `[{"op":"move","from":123,"path":"/a"}]`},
+		{"from as object", `[{"op":"copy","from":{},"path":"/a"}]`},
+		{"from as array", `[{"op":"move","from":[],"path":"/a"}]`},
+		{"from as boolean", `[{"op":"copy","from":true,"path":"/a"}]`},
+		{"from as null", `[{"op":"move","from":null,"path":"/a"}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodePatch([]byte(tt.raw))
+			if err == nil {
+				t.Fatalf("expected DecodePatch to reject non-string from: %s", tt.raw)
+			}
+		})
+	}
+}
+
+func TestDecodePatch_DuplicateMemberBehavior(t *testing.T) {
+	// Duplicate object members have undefined handling in JSON Patch (RFC 6902 Appendix A.13).
+	// Go's encoding/json keeps the last occurrence; this test documents and guards that behavior.
+	raw := []byte(`[{"op":"remove","path":"/first","path":"/second"}]`)
+
+	patch, err := DecodePatch(raw)
+	if err != nil {
+		t.Fatalf("expected decode to succeed with duplicate path key under encoding/json semantics: %v", err)
+	}
+
+	if len(patch) != 1 {
+		t.Fatalf("expected one operation, got %d", len(patch))
+	}
+
+	if patch[0].Path != "/second" {
+		t.Fatalf("expected last duplicate key to win, got path=%q", patch[0].Path)
+	}
+}
+
 func TestCreatePatch_InvalidOriginalJSON(t *testing.T) {
 	_, err := CreatePatch([]byte(`not json`), []byte(`{}`))
 	if err == nil {

@@ -133,8 +133,9 @@ func newAddOp(path string, value interface{}) Operation {
 // newRemoveOp creates a "remove" operation.
 func newRemoveOp(path string) Operation {
 	return Operation{
-		Op:   OpRemove,
-		Path: path,
+		Op:      OpRemove,
+		Path:    path,
+		hasPath: true,
 	}
 }
 

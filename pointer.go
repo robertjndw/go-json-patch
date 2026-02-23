@@ -26,6 +26,9 @@ func ParsePointer(s string) (Pointer, error) {
 	parts := strings.Split(s[1:], "/")
 	tokens := make([]string, len(parts))
 	for i, part := range parts {
+		if err := validatePointerToken(part); err != nil {
+			return Pointer{}, fmt.Errorf("invalid JSON Pointer %q: %w", s, err)
+		}
 		tokens[i] = unescapePointerToken(part)
 	}
 	return Pointer{tokens: tokens}, nil
@@ -220,9 +223,11 @@ func (p Pointer) replaceValue(doc interface{}, newValue interface{}) (interface{
 }
 
 // resolveArrayIndex converts a JSON Pointer token to an array index.
+// The "-" token is NOT handled here; callers that need to support it
+// (e.g., add/Set) must handle it before calling this function.
 func resolveArrayIndex(token string, arrayLen int) (int, error) {
 	if token == "-" {
-		return arrayLen, nil
+		return 0, fmt.Errorf("the \"-\" token is not valid for this operation (only valid for add target)")
 	}
 	// Leading zeros are not allowed per RFC 6901
 	if len(token) > 1 && token[0] == '0' {
@@ -239,6 +244,24 @@ func resolveArrayIndex(token string, arrayLen int) (int, error) {
 		return 0, fmt.Errorf("array index %d out of bounds (length %d)", idx, arrayLen)
 	}
 	return idx, nil
+}
+
+// validatePointerToken checks that a raw (still-escaped) token has valid escape
+// sequences per RFC 6901: ~ MUST be followed by '0' or '1'.
+func validatePointerToken(raw string) error {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '~' {
+			if i+1 >= len(raw) {
+				return fmt.Errorf("invalid escape: '~' at end of token %q", raw)
+			}
+			next := raw[i+1]
+			if next != '0' && next != '1' {
+				return fmt.Errorf("invalid escape sequence '~%c' in token %q", next, raw)
+			}
+			i++ // skip the next character, already validated
+		}
+	}
+	return nil
 }
 
 // escapePointerToken encodes a token for use in a JSON Pointer string.
