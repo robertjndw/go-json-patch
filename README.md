@@ -132,6 +132,52 @@ This library aims for strict RFC 6902 compliance including:
 - Deep equality comparison for the `test` operation per Section 4.6
 - Ignoring unrecognized members in operation objects per Section 4
 
-## License
+## Performance & Benchmarking
 
+The library includes comprehensive benchmarks covering all major operations at various scales. Contributors can use these to verify performance improvements or regressions.
+
+### Running Benchmarks
+
+Run all benchmarks with memory allocation stats:
+
+```bash
+go test -bench=. -benchmem
+```
+
+### Comparing Performance Changes
+
+To compare performance before and after a change, use [`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
+
+1. Install benchstat:
+   ```bash
+   go install golang.org/x/perf/cmd/benchstat@latest
+   ```
+
+2. Collect baseline benchmarks:
+   ```bash
+   go test -bench=. -benchmem -count=5 > old.txt
+   ```
+
+3. Make your changes and collect new benchmarks:
+   ```bash
+   go test -bench=. -benchmem -count=5 > new.txt
+   ```
+
+4. Compare results:
+   ```bash
+   benchstat old.txt new.txt
+   ```
+
+This will show you the performance delta for each benchmark function, including ns/op (time), B/op (memory), and allocs/op changes.
+
+### Benchmark Coverage
+
+The benchmarks include:
+- **Apply operations**: Single ops, multi-op sequences, large documents, large patches, nested structures, array operations
+- **CreatePatch**: Small and large objects, identical documents, arrays, deep nesting, round-trip scenarios
+- **Serialization**: DecodePatch, MarshalPatch
+- **Pointer operations**: Parsing, evaluation, modification
+- **End-to-end**: Realistic complex object scenarios
+
+## License
 MIT
