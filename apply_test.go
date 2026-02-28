@@ -2,6 +2,7 @@ package jsonpatch
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -551,5 +552,248 @@ func assertJSONEqual(t *testing.T, expected, actual string) {
 	}
 	if !jsonEqual(e, a) {
 		t.Errorf("JSON not equal:\n  expected: %s\n  actual:   %s", expected, actual)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Structured error types
+// ---------------------------------------------------------------------------
+
+func TestStructuredError_TestFailedError(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "test", "path": "/foo", "value": "wrong"}]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var opErr *InvalidOperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected InvalidOperationError, got %T: %v", err, err)
+	}
+	if opErr.Index != 0 || opErr.Op != OpTest {
+		t.Errorf("unexpected operation error: index=%d, op=%s", opErr.Index, opErr.Op)
+	}
+
+	var testErr *TestFailedError
+	if !errors.As(err, &testErr) {
+		t.Fatalf("expected TestFailedError, got %T: %v", err, err)
+	}
+	if testErr.Path != "/foo" {
+		t.Errorf("expected path /foo, got %s", testErr.Path)
+	}
+	if testErr.Expected != "wrong" {
+		t.Errorf("expected expected=wrong, got %v", testErr.Expected)
+	}
+	if testErr.Actual != "bar" {
+		t.Errorf("expected actual=bar, got %v", testErr.Actual)
+	}
+}
+
+func TestStructuredError_PathNotFoundError(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "remove", "path": "/missing"}]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var pnf *PathNotFoundError
+	if !errors.As(err, &pnf) {
+		t.Fatalf("expected PathNotFoundError, got %T: %v", err, err)
+	}
+}
+
+func TestStructuredError_IndexOutOfBoundsError(t *testing.T) {
+	doc := []byte(`{"arr": [1, 2]}`)
+	patch := []byte(`[{"op": "replace", "path": "/arr/5", "value": 99}]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var idx *IndexOutOfBoundsError
+	if !errors.As(err, &idx) {
+		t.Fatalf("expected IndexOutOfBoundsError, got %T: %v", err, err)
+	}
+	if idx.Index != 5 || idx.Length != 2 {
+		t.Errorf("expected index=5 length=2, got index=%d length=%d", idx.Index, idx.Length)
+	}
+}
+
+func TestStructuredError_InvalidOperationError(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[
+		{"op": "add", "path": "/x", "value": 1},
+		{"op": "remove", "path": "/nonexistent"}
+	]`)
+
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var opErr *InvalidOperationError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("expected InvalidOperationError, got %T: %v", err, err)
+	}
+	if opErr.Index != 1 {
+		t.Errorf("expected index 1, got %d", opErr.Index)
+	}
+	if opErr.Op != OpRemove {
+		t.Errorf("expected op remove, got %s", opErr.Op)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ApplyWithOptions
+// ---------------------------------------------------------------------------
+
+func TestApplyWithOptions_AllowMissingPathOnRemove(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "remove", "path": "/nonexistent"}]`)
+
+	// Without option — should fail.
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error without option")
+	}
+
+	// With option — should succeed and return document unchanged.
+	result, err := ApplyWithOptions(doc, patch, WithAllowMissingPathOnRemove())
+	if err != nil {
+		t.Fatalf("expected no error with AllowMissingPathOnRemove, got: %v", err)
+	}
+	assertJSONEqual(t, `{"foo": "bar"}`, string(result))
+}
+
+func TestApplyWithOptions_AllowMissingPathOnRemove_ExistingPath(t *testing.T) {
+	doc := []byte(`{"foo": "bar", "baz": "qux"}`)
+	patch := []byte(`[{"op": "remove", "path": "/baz"}]`)
+
+	result, err := ApplyWithOptions(doc, patch, WithAllowMissingPathOnRemove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, `{"foo": "bar"}`, string(result))
+}
+
+func TestApplyWithOptions_EnsurePathExistsOnAdd(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patch := []byte(`[{"op": "add", "path": "/a/b/c", "value": "deep"}]`)
+
+	// Without option — should fail.
+	_, err := Apply(doc, patch)
+	if err == nil {
+		t.Fatal("expected error without option")
+	}
+
+	// With option — should auto-create intermediates.
+	result, err := ApplyWithOptions(doc, patch, WithEnsurePathExistsOnAdd())
+	if err != nil {
+		t.Fatalf("expected no error with EnsurePathExistsOnAdd, got: %v", err)
+	}
+	assertJSONEqual(t, `{"foo": "bar", "a": {"b": {"c": "deep"}}}`, string(result))
+}
+
+func TestApplyPatchWithOptions(t *testing.T) {
+	doc := []byte(`{"foo": "bar"}`)
+	patchJSON := []byte(`[
+		{"op": "remove", "path": "/missing"},
+		{"op": "add", "path": "/baz", "value": "qux"}
+	]`)
+	patch, err := DecodePatch(patchJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ApplyPatchWithOptions(doc, patch, WithAllowMissingPathOnRemove())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONEqual(t, `{"foo": "bar", "baz": "qux"}`, string(result))
+}
+
+// ---------------------------------------------------------------------------
+// jsonEqual
+// ---------------------------------------------------------------------------
+
+func TestJsonEqual_Nil(t *testing.T) {
+	if !jsonEqual(nil, nil) {
+		t.Error("nil should equal nil")
+	}
+	if jsonEqual(nil, "x") {
+		t.Error("nil should not equal string")
+	}
+}
+
+func TestJsonEqual_Bool(t *testing.T) {
+	if !jsonEqual(true, true) {
+		t.Error("true should equal true")
+	}
+	if jsonEqual(true, false) {
+		t.Error("true should not equal false")
+	}
+	if jsonEqual(true, "true") {
+		t.Error("bool should not equal string")
+	}
+}
+
+func TestJsonEqual_Float64(t *testing.T) {
+	if !jsonEqual(1.5, 1.5) {
+		t.Error("1.5 should equal 1.5")
+	}
+	if jsonEqual(1.5, 2.5) {
+		t.Error("1.5 should not equal 2.5")
+	}
+}
+
+func TestJsonEqual_String(t *testing.T) {
+	if !jsonEqual("abc", "abc") {
+		t.Error("abc should equal abc")
+	}
+	if jsonEqual("abc", "def") {
+		t.Error("abc should not equal def")
+	}
+}
+
+func TestJsonEqual_Map(t *testing.T) {
+	a := map[string]interface{}{"x": float64(1), "y": "two"}
+	b := map[string]interface{}{"x": float64(1), "y": "two"}
+	c := map[string]interface{}{"x": float64(1)}
+
+	if !jsonEqual(a, b) {
+		t.Error("identical maps should be equal")
+	}
+	if jsonEqual(a, c) {
+		t.Error("maps with different keys should not be equal")
+	}
+}
+
+func TestJsonEqual_Slice(t *testing.T) {
+	a := []interface{}{float64(1), "two", true}
+	b := []interface{}{float64(1), "two", true}
+	c := []interface{}{float64(1), "two", false}
+
+	if !jsonEqual(a, b) {
+		t.Error("identical slices should be equal")
+	}
+	if jsonEqual(a, c) {
+		t.Error("slices with different elements should not be equal")
+	}
+}
+
+func TestJsonEqual_NestedStructures(t *testing.T) {
+	a := map[string]interface{}{
+		"arr": []interface{}{float64(1), map[string]interface{}{"k": "v"}},
+	}
+	b := map[string]interface{}{
+		"arr": []interface{}{float64(1), map[string]interface{}{"k": "v"}},
+	}
+	if !jsonEqual(a, b) {
+		t.Error("deeply nested equal structures should match")
 	}
 }

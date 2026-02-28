@@ -102,7 +102,7 @@ func (p Pointer) Evaluate(doc interface{}) (interface{}, error) {
 		case map[string]interface{}:
 			val, ok := node[token]
 			if !ok {
-				return nil, fmt.Errorf("key %q not found in object", token)
+				return nil, &PathNotFoundError{Path: p.String()}
 			}
 			current = val
 		case []interface{}:
@@ -179,7 +179,7 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 	switch node := parent.(type) {
 	case map[string]interface{}:
 		if _, ok := node[key]; !ok {
-			return nil, fmt.Errorf("key %q not found in object", key)
+			return nil, &PathNotFoundError{Path: p.String()}
 		}
 		delete(node, key)
 		return doc, nil
@@ -248,7 +248,7 @@ func resolveArrayIndex(token string, arrayLen int) (int, error) {
 		return 0, fmt.Errorf("array index must not be negative: %d", idx)
 	}
 	if idx >= arrayLen {
-		return 0, fmt.Errorf("array index %d out of bounds (length %d)", idx, arrayLen)
+		return 0, &IndexOutOfBoundsError{Index: idx, Length: arrayLen}
 	}
 	return idx, nil
 }

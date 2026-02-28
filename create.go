@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // CreatePatch generates a JSON Patch document (RFC 6902) that transforms
@@ -21,21 +22,43 @@ func CreatePatch(original, modified []byte) (Patch, error) {
 	}
 
 	patch := Patch{}
-	diff(&patch, "", origDoc, modDoc)
+	stack := make([]string, 0, 16) // token stack, pre-allocated
+	diff(&patch, &stack, origDoc, modDoc)
 	return patch, nil
 }
 
 // CreatePatchFromValues generates a JSON Patch from two already-parsed JSON values.
 func CreatePatchFromValues(original, modified interface{}) Patch {
 	patch := Patch{}
-	diff(&patch, "", normalizeJSON(original), normalizeJSON(modified))
+	stack := make([]string, 0, 16)
+	diff(&patch, &stack, normalizeJSON(original), normalizeJSON(modified))
 	return patch
+}
+
+// stackToPath serializes a token stack to a JSON Pointer string.
+func stackToPath(stack *[]string) string {
+	s := *stack
+	if len(s) == 0 {
+		return ""
+	}
+	// Estimate capacity: "/" per token + average token length.
+	size := 0
+	for _, t := range s {
+		size += 1 + len(t)
+	}
+	var sb strings.Builder
+	sb.Grow(size)
+	for _, t := range s {
+		sb.WriteByte('/')
+		sb.WriteString(escapePointerToken(t))
+	}
+	return sb.String()
 }
 
 // diff recursively computes the differences between two JSON values
 // and appends the corresponding operations to the patch.
-func diff(patch *Patch, path string, original, modified interface{}) {
-	// Fast path for primitives — avoids reflect.DeepEqual overhead.
+func diff(patch *Patch, stack *[]string, original, modified interface{}) {
+	// Fast path for primitives — avoids type-switch overhead.
 	switch o := original.(type) {
 	case nil:
 		if modified == nil {
@@ -68,17 +91,17 @@ func diff(patch *Patch, path string, original, modified interface{}) {
 
 	switch {
 	case origIsObj && modIsObj:
-		diffObjects(patch, path, origObj, modObj)
+		diffObjects(patch, stack, origObj, modObj)
 	case origIsArr && modIsArr:
-		diffArrays(patch, path, origArr, modArr)
+		diffArrays(patch, stack, origArr, modArr)
 	default:
 		// Types differ or primitive values differ — replace
-		*patch = append(*patch, newReplaceOp(path, modified))
+		*patch = append(*patch, newReplaceOp(stackToPath(stack), modified))
 	}
 }
 
 // diffObjects computes the diff between two JSON objects.
-func diffObjects(patch *Patch, path string, original, modified map[string]interface{}) {
+func diffObjects(patch *Patch, stack *[]string, original, modified map[string]interface{}) {
 	// Collect all keys from both objects for deterministic ordering
 	keys := make(map[string]bool)
 	for k := range original {
@@ -95,27 +118,28 @@ func diffObjects(patch *Patch, path string, original, modified map[string]interf
 	sort.Strings(sortedKeys)
 
 	for _, key := range sortedKeys {
-		childPath := path + "/" + escapePointerToken(key)
+		*stack = append(*stack, key)
 		origVal, inOrig := original[key]
 		modVal, inMod := modified[key]
 
 		switch {
 		case inOrig && inMod:
 			// Key exists in both — recurse
-			diff(patch, childPath, origVal, modVal)
+			diff(patch, stack, origVal, modVal)
 		case inOrig && !inMod:
 			// Key removed
-			*patch = append(*patch, newRemoveOp(childPath))
+			*patch = append(*patch, newRemoveOp(stackToPath(stack)))
 		case !inOrig && inMod:
 			// Key added
-			*patch = append(*patch, newAddOp(childPath, modVal))
+			*patch = append(*patch, newAddOp(stackToPath(stack), modVal))
 		}
+		*stack = (*stack)[:len(*stack)-1] // pop
 	}
 }
 
 // diffArrays computes the diff between two JSON arrays.
 // Uses a simple approach: compare element by element, then handle length differences.
-func diffArrays(patch *Patch, path string, original, modified []interface{}) {
+func diffArrays(patch *Patch, stack *[]string, original, modified []interface{}) {
 	commonLen := len(original)
 	if len(modified) < commonLen {
 		commonLen = len(modified)
@@ -123,15 +147,18 @@ func diffArrays(patch *Patch, path string, original, modified []interface{}) {
 
 	// Compare common elements
 	for i := 0; i < commonLen; i++ {
-		childPath := path + "/" + strconv.Itoa(i)
-		diff(patch, childPath, original[i], modified[i])
+		*stack = append(*stack, strconv.Itoa(i))
+		diff(patch, stack, original[i], modified[i])
+		*stack = (*stack)[:len(*stack)-1] // pop
 	}
 
 	// Handle extra elements in modified (additions)
 	if len(modified) > len(original) {
+		*stack = append(*stack, "-")
+		path := stackToPath(stack)
+		*stack = (*stack)[:len(*stack)-1] // pop
 		for i := len(original); i < len(modified); i++ {
-			childPath := path + "/-"
-			*patch = append(*patch, newAddOp(childPath, modified[i]))
+			*patch = append(*patch, newAddOp(path, modified[i]))
 		}
 	}
 
@@ -139,8 +166,9 @@ func diffArrays(patch *Patch, path string, original, modified []interface{}) {
 	// Remove from the end to avoid index shifting issues
 	if len(original) > len(modified) {
 		for i := len(original) - 1; i >= len(modified); i-- {
-			childPath := path + "/" + strconv.Itoa(i)
-			*patch = append(*patch, newRemoveOp(childPath))
+			*stack = append(*stack, strconv.Itoa(i))
+			*patch = append(*patch, newRemoveOp(stackToPath(stack)))
+			*stack = (*stack)[:len(*stack)-1] // pop
 		}
 	}
 }

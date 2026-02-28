@@ -363,6 +363,131 @@ func TestCreatePatch_InvalidOriginalJSON(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Operation.Validate() and HasFrom()
+// ---------------------------------------------------------------------------
+
+func TestValidate_StructLiteral(t *testing.T) {
+	// Struct literal without hasPath set — Validate should infer it.
+	raw := json.RawMessage(`"hello"`)
+	op := Operation{
+		Op:    OpAdd,
+		Path:  "/foo",
+		Value: &raw,
+	}
+	if err := op.Validate(); err != nil {
+		t.Fatalf("Validate() should succeed for well-formed struct literal: %v", err)
+	}
+	if !op.parsed {
+		t.Fatal("expected parsed to be true after Validate()")
+	}
+}
+
+func TestValidate_MoveStructLiteral(t *testing.T) {
+	op := Operation{
+		Op:   OpMove,
+		From: "/a",
+		Path: "/b",
+	}
+	if err := op.Validate(); err != nil {
+		t.Fatalf("Validate() should succeed: %v", err)
+	}
+}
+
+func TestValidate_CopyStructLiteralWithRootFrom(t *testing.T) {
+	// From="" (root) should be accepted for copy.
+	op := Operation{
+		Op:   OpCopy,
+		From: "",
+		Path: "/dup",
+	}
+	if err := op.Validate(); err != nil {
+		t.Fatalf("Validate() should succeed for copy with root from: %v", err)
+	}
+}
+
+func TestValidate_RemoveStructLiteral(t *testing.T) {
+	op := Operation{
+		Op:   OpRemove,
+		Path: "/foo",
+	}
+	if err := op.Validate(); err != nil {
+		t.Fatalf("Validate() should succeed: %v", err)
+	}
+}
+
+func TestValidate_MissingOp(t *testing.T) {
+	op := Operation{Path: "/foo"}
+	if err := op.Validate(); err == nil {
+		t.Fatal("expected error for missing op")
+	}
+}
+
+func TestValidate_InvalidPath(t *testing.T) {
+	raw := json.RawMessage(`1`)
+	op := Operation{
+		Op:    OpAdd,
+		Path:  "no-slash",
+		Value: &raw,
+	}
+	if err := op.Validate(); err == nil {
+		t.Fatal("expected error for invalid path without leading slash")
+	}
+}
+
+func TestValidate_CachesPointers(t *testing.T) {
+	raw := json.RawMessage(`"val"`)
+	op := Operation{
+		Op:    OpReplace,
+		Path:  "/a/b",
+		Value: &raw,
+	}
+	if err := op.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if op.parsedPath.String() != "/a/b" {
+		t.Errorf("expected cached path /a/b, got %s", op.parsedPath.String())
+	}
+}
+
+func TestHasFrom(t *testing.T) {
+	op1 := NewMoveOperation("/a", "/b")
+	if !op1.HasFrom() {
+		t.Error("expected HasFrom() true for NewMoveOperation")
+	}
+
+	op2 := Operation{Op: OpAdd, Path: "/x"}
+	if op2.HasFrom() {
+		t.Error("expected HasFrom() false for operation without from")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cached value behaviour
+// ---------------------------------------------------------------------------
+
+func TestCachedValue_DecodedPatchUsesCache(t *testing.T) {
+	patchJSON := []byte(`[{"op": "add", "path": "/foo", "value": {"nested": true}}]`)
+	patch, err := DecodePatch(patchJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !patch[0].parsed {
+		t.Fatal("expected parsed=true after DecodePatch")
+	}
+	val, err := patch[0].GetValue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := val.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", val)
+	}
+	if m["nested"] != true {
+		t.Errorf("expected nested=true, got %v", m["nested"])
+	}
+}
+
 func TestCreatePatch_InvalidModifiedJSON(t *testing.T) {
 	_, err := CreatePatch([]byte(`{}`), []byte(`not json`))
 	if err == nil {

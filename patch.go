@@ -67,6 +67,18 @@ type Operation struct {
 	// hasValue tracks whether the "value" key was present in the original JSON,
 	// distinguishing between an absent key and an explicit null.
 	hasValue bool
+
+	// parsedPath is the cached parsed Pointer for Path, populated during validation.
+	parsedPath Pointer
+
+	// parsedFrom is the cached parsed Pointer for From, populated during validation.
+	parsedFrom Pointer
+
+	// parsedValue is the cached unmarshaled value, populated during validation.
+	parsedValue interface{}
+
+	// parsed indicates whether the cached fields have been populated.
+	parsed bool
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for Operation to properly
@@ -137,6 +149,47 @@ func (o Operation) HasValue() bool {
 	return o.hasValue || o.Value != nil
 }
 
+// HasFrom reports whether the operation has a "from" field
+// (including an explicit empty string meaning root pointer).
+func (o Operation) HasFrom() bool {
+	return o.hasFrom
+}
+
+// Validate validates the operation, checking that all required fields are
+// present and that pointer strings are well-formed. It also caches parsed
+// pointers and values for efficient subsequent application.
+//
+// For struct-literal operations (not created via NewOperation / DecodePatch),
+// Validate infers field presence: if Op is a recognised operation type then
+// hasPath is assumed true (root "" is a valid path for all RFC 6902 ops);
+// hasFrom is inferred when From is non-empty or Op is move/copy.
+func (o *Operation) Validate() error {
+	// Infer hasPath for recognised ops when not already set (struct literal).
+	if !o.hasPath && o.Op != "" {
+		switch o.Op {
+		case OpAdd, OpRemove, OpReplace, OpMove, OpCopy, OpTest:
+			o.hasPath = true
+		}
+	}
+	// Infer hasFrom when From is populated or the op requires it.
+	if !o.hasFrom {
+		if o.From != "" {
+			o.hasFrom = true
+		} else if o.Op == OpMove || o.Op == OpCopy {
+			// Empty from ("") is the root pointer — mark as explicitly set
+			// only if the caller actually set From to "".
+			// We can't distinguish uninitialised "" from intentional "" on a
+			// plain struct literal, so for move/copy we assume it's set.
+			o.hasFrom = true
+		}
+	}
+	// Infer hasValue when Value is non-nil.
+	if !o.hasValue && o.Value != nil {
+		o.hasValue = true
+	}
+	return validateAndCacheOperation(o)
+}
+
 // Patch represents a JSON Patch document — an ordered list of operations.
 type Patch []Operation
 
@@ -191,10 +244,14 @@ func NewRemoveOperation(path string) Operation {
 	}
 }
 
-// GetValue unmarshals the operation's value.
+// GetValue returns the operation's value. If the value has been pre-parsed
+// (e.g. via DecodePatch), the cached value is returned directly.
 func (o Operation) GetValue() (interface{}, error) {
 	if !o.HasValue() {
 		return nil, fmt.Errorf("operation has no value")
+	}
+	if o.parsed {
+		return o.parsedValue, nil
 	}
 	var v interface{}
 	if err := json.Unmarshal(*o.Value, &v); err != nil {
@@ -210,9 +267,9 @@ func DecodePatch(patchJSON []byte) (Patch, error) {
 		return nil, fmt.Errorf("failed to decode patch document: %w", err)
 	}
 
-	// Validate operations
-	for i, op := range patch {
-		if err := validateOperation(op); err != nil {
+	// Validate and cache parsed fields for each operation.
+	for i := range patch {
+		if err := validateAndCacheOperation(&patch[i]); err != nil {
 			return nil, fmt.Errorf("invalid operation at index %d: %w", i, err)
 		}
 	}
@@ -226,7 +283,14 @@ func MarshalPatch(patch Patch) ([]byte, error) {
 }
 
 // validateOperation checks that an operation has the required fields.
+// It does not cache parsed results; use validateAndCacheOperation for that.
 func validateOperation(op Operation) error {
+	return validateAndCacheOperation(&op)
+}
+
+// validateAndCacheOperation validates the operation and caches parsed pointers
+// and the unmarshaled value so that apply* functions can reuse them.
+func validateAndCacheOperation(op *Operation) error {
 	// All operations MUST have exactly one "op" member (RFC 6902 Section 4).
 	if op.Op == "" {
 		return fmt.Errorf("operation must contain a non-empty \"op\" member")
@@ -237,30 +301,53 @@ func validateOperation(op Operation) error {
 		return fmt.Errorf("%q operation must contain a \"path\" member", op.Op)
 	}
 
+	var pathPtr Pointer
+	var fromPtr Pointer
+	var err error
+
 	switch op.Op {
 	case OpAdd, OpReplace, OpTest:
 		if !op.HasValue() {
 			return fmt.Errorf("%q operation must contain a \"value\" member", op.Op)
 		}
-		if _, err := ParsePointer(op.Path); err != nil {
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
 			return fmt.Errorf("invalid path: %w", err)
 		}
 	case OpRemove:
-		if _, err := ParsePointer(op.Path); err != nil {
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
 			return fmt.Errorf("invalid path: %w", err)
 		}
 	case OpMove, OpCopy:
 		if !op.hasFrom {
 			return fmt.Errorf("%q operation must contain a \"from\" member", op.Op)
 		}
-		if _, err := ParsePointer(op.Path); err != nil {
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
 			return fmt.Errorf("invalid path: %w", err)
 		}
-		if _, err := ParsePointer(op.From); err != nil {
+		fromPtr, err = ParsePointer(op.From)
+		if err != nil {
 			return fmt.Errorf("invalid from: %w", err)
 		}
 	default:
 		return fmt.Errorf("unknown operation %q", op.Op)
 	}
+
+	// Cache parsed pointers.
+	op.parsedPath = pathPtr
+	op.parsedFrom = fromPtr
+
+	// Cache the unmarshaled value.
+	if op.HasValue() {
+		var v interface{}
+		if err := json.Unmarshal(*op.Value, &v); err != nil {
+			return fmt.Errorf("failed to unmarshal value: %w", err)
+		}
+		op.parsedValue = v
+	}
+
+	op.parsed = true
 	return nil
 }
