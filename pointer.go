@@ -1,7 +1,6 @@
 package jsonpatch
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -39,7 +38,13 @@ func (p Pointer) String() string {
 	if len(p.tokens) == 0 {
 		return ""
 	}
+	// Pre-estimate capacity to avoid reallocations.
+	size := 0
+	for _, token := range p.tokens {
+		size += 1 + len(token) // "/" + token (conservative; escaping may add chars)
+	}
 	var sb strings.Builder
+	sb.Grow(size)
 	for _, token := range p.tokens {
 		sb.WriteByte('/')
 		sb.WriteString(escapePointerToken(token))
@@ -120,9 +125,10 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 		return value, nil
 	}
 
-	parent, err := p.Parent().Evaluate(doc)
+	parentPtr := p.Parent()
+	parent, err := parentPtr.Evaluate(doc)
 	if err != nil {
-		return nil, fmt.Errorf("parent path %q does not exist: %w", p.Parent().String(), err)
+		return nil, fmt.Errorf("parent path %q does not exist: %w", parentPtr.String(), err)
 	}
 
 	key := p.Last()
@@ -135,7 +141,7 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 		if key == "-" {
 			// Append to the end of the array
 			newArr := append(node, value)
-			return p.Parent().replaceValue(doc, newArr)
+			return parentPtr.replaceValue(doc, newArr)
 		}
 		idx, err := resolveArrayIndex(key, len(node)+1) // +1 because we can insert at the end
 		if err != nil {
@@ -149,7 +155,7 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 		copy(newArr[:idx], node[:idx])
 		newArr[idx] = value
 		copy(newArr[idx+1:], node[idx:])
-		return p.Parent().replaceValue(doc, newArr)
+		return parentPtr.replaceValue(doc, newArr)
 	default:
 		return nil, fmt.Errorf("cannot set value in %T", parent)
 	}
@@ -162,9 +168,10 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("cannot remove root document")
 	}
 
-	parent, err := p.Parent().Evaluate(doc)
+	parentPtr := p.Parent()
+	parent, err := parentPtr.Evaluate(doc)
 	if err != nil {
-		return nil, fmt.Errorf("parent path %q does not exist: %w", p.Parent().String(), err)
+		return nil, fmt.Errorf("parent path %q does not exist: %w", parentPtr.String(), err)
 	}
 
 	key := p.Last()
@@ -184,10 +191,10 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 		if idx >= len(node) {
 			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
 		}
-		newArr := make([]interface{}, 0, len(node)-1)
-		newArr = append(newArr, node[:idx]...)
-		newArr = append(newArr, node[idx+1:]...)
-		return p.Parent().replaceValue(doc, newArr)
+		newArr := make([]interface{}, len(node)-1)
+		copy(newArr, node[:idx])
+		copy(newArr[idx:], node[idx+1:])
+		return parentPtr.replaceValue(doc, newArr)
 	default:
 		return nil, fmt.Errorf("cannot remove value from %T", parent)
 	}
@@ -267,6 +274,9 @@ func validatePointerToken(raw string) error {
 // escapePointerToken encodes a token for use in a JSON Pointer string.
 // Per RFC 6901: ~ is escaped as ~0, / is escaped as ~1.
 func escapePointerToken(token string) string {
+	if !strings.ContainsAny(token, "~/") {
+		return token
+	}
 	token = strings.ReplaceAll(token, "~", "~0")
 	token = strings.ReplaceAll(token, "/", "~1")
 	return token
@@ -276,15 +286,32 @@ func escapePointerToken(token string) string {
 // Per RFC 6901: ~1 is unescaped to /, ~0 is unescaped to ~.
 // Order matters: ~1 must be processed before ~0.
 func unescapePointerToken(token string) string {
+	if !strings.Contains(token, "~") {
+		return token
+	}
 	token = strings.ReplaceAll(token, "~1", "/")
 	token = strings.ReplaceAll(token, "~0", "~")
 	return token
 }
 
 // deepCopy creates a deep copy of a JSON-compatible value.
+// It recursively copies maps and slices; primitives (string, float64, bool, nil)
+// are immutable and returned as-is.
 func deepCopy(v interface{}) interface{} {
-	b, _ := json.Marshal(v)
-	var out interface{}
-	_ = json.Unmarshal(b, &out)
-	return out
+	switch val := v.(type) {
+	case map[string]interface{}:
+		m := make(map[string]interface{}, len(val))
+		for k, v := range val {
+			m[k] = deepCopy(v)
+		}
+		return m
+	case []interface{}:
+		a := make([]interface{}, len(val))
+		for i, v := range val {
+			a[i] = deepCopy(v)
+		}
+		return a
+	default:
+		return v
+	}
 }

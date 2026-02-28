@@ -78,13 +78,21 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if opRaw, ok := raw["op"]; ok {
-		var opValue interface{}
-		if err := json.Unmarshal(opRaw, &opValue); err != nil {
-			return fmt.Errorf("invalid \"op\" field: %w", err)
+	// rejectNull returns an error if the raw JSON value is "null".
+	// This prevents json.Unmarshal from silently accepting null into a string.
+	rejectNull := func(raw json.RawMessage, field string) error {
+		if string(raw) == "null" {
+			return fmt.Errorf("invalid %q field: must be a string", field)
 		}
-		op, ok := opValue.(string)
-		if !ok {
+		return nil
+	}
+
+	if opRaw, ok := raw["op"]; ok {
+		if err := rejectNull(opRaw, "op"); err != nil {
+			return err
+		}
+		var op string
+		if err := json.Unmarshal(opRaw, &op); err != nil {
 			return fmt.Errorf("invalid \"op\" field: must be a string")
 		}
 		o.Op = OpType(op)
@@ -92,12 +100,11 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 
 	if pathRaw, ok := raw["path"]; ok {
 		o.hasPath = true
-		var pathValue interface{}
-		if err := json.Unmarshal(pathRaw, &pathValue); err != nil {
-			return fmt.Errorf("invalid \"path\" field: %w", err)
+		if err := rejectNull(pathRaw, "path"); err != nil {
+			return err
 		}
-		path, ok := pathValue.(string)
-		if !ok {
+		var path string
+		if err := json.Unmarshal(pathRaw, &path); err != nil {
 			return fmt.Errorf("invalid \"path\" field: must be a string")
 		}
 		o.Path = path
@@ -105,12 +112,11 @@ func (o *Operation) UnmarshalJSON(data []byte) error {
 
 	if fromRaw, ok := raw["from"]; ok {
 		o.hasFrom = true
-		var fromValue interface{}
-		if err := json.Unmarshal(fromRaw, &fromValue); err != nil {
-			return fmt.Errorf("invalid \"from\" field: %w", err)
+		if err := rejectNull(fromRaw, "from"); err != nil {
+			return err
 		}
-		from, ok := fromValue.(string)
-		if !ok {
+		var from string
+		if err := json.Unmarshal(fromRaw, &from); err != nil {
 			return fmt.Errorf("invalid \"from\" field: must be a string")
 		}
 		o.From = from
