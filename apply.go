@@ -6,40 +6,43 @@ import (
 	"reflect"
 )
 
-// Apply applies a JSON Patch document (as raw JSON bytes) to a target JSON
-// document (as raw JSON bytes). It returns the patched document as raw JSON
-// bytes. Operations are applied sequentially; if any operation fails, the
-// entire patch is aborted and an error is returned (atomic semantics per
-// RFC 5789).
-func Apply(docJSON, patchJSON []byte) ([]byte, error) {
+// Apply applies a JSON Patch document to a target JSON document.
+// Both arguments must be valid JSON encoded as []byte or string (or any type
+// with one of those underlying types). The return type matches the input type.
+// Operations are applied sequentially; if any operation fails, the entire
+// patch is aborted and an error is returned (atomic semantics per RFC 5789).
+func Apply[D Document](docJSON, patchJSON D) (D, error) {
+	var zero D
 	patch, err := DecodePatch(patchJSON)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	return ApplyPatch(docJSON, patch)
 }
 
-// ApplyPatch applies a decoded Patch to a target JSON document (as raw JSON bytes).
-// It returns the patched document as raw JSON bytes.
-func ApplyPatch(docJSON []byte, patch Patch) ([]byte, error) {
+// ApplyPatch applies a decoded Patch to a target JSON document.
+// The document can be []byte or string (or any type with one of those
+// underlying types). The return type matches the input type.
+func ApplyPatch[D Document](docJSON D, patch Patch) (D, error) {
+	var zero D
 	var doc interface{}
-	if err := json.Unmarshal(docJSON, &doc); err != nil {
-		return nil, fmt.Errorf("failed to decode target document: %w", err)
+	if err := json.Unmarshal(toBytes(docJSON), &doc); err != nil {
+		return zero, fmt.Errorf("failed to decode target document: %w", err)
 	}
 
 	var err error
 	for i, op := range patch {
 		doc, err = applyOperation(doc, op)
 		if err != nil {
-			return nil, fmt.Errorf("operation %d (%s %s) failed: %w", i, op.Op, op.Path, err)
+			return zero, fmt.Errorf("operation %d (%s %s) failed: %w", i, op.Op, op.Path, err)
 		}
 	}
 
 	result, err := json.Marshal(doc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal result: %w", err)
+		return zero, fmt.Errorf("failed to marshal result: %w", err)
 	}
-	return result, nil
+	return fromBytes[D](result), nil
 }
 
 // applyOperation applies a single operation to the document.

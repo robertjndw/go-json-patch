@@ -12,6 +12,7 @@ go get github.com/robertjndw/go-json-patch
 
 - **Apply** a JSON Patch document to a target JSON document
 - **Create** a JSON Patch by diffing two JSON documents
+- **Generic API** — all public functions accept `[]byte`, `string`, or custom types with those underlying types
 - Full support for all six RFC 6902 operations: `add`, `remove`, `replace`, `move`, `copy`, `test`
 - Strict JSON Pointer (RFC 6901) parsing with `~` and `/` escaping and escape validation
 - Atomic patch application — if any operation fails, the entire patch is rejected
@@ -92,6 +93,33 @@ result, err := jsonpatch.ApplyPatch(documentJSON, patch)
 if err != nil {
     log.Fatal(err)
 }
+```
+
+### Using Strings Instead of []byte
+
+All public functions accept `string` as well as `[]byte` — no manual conversion needed:
+
+```go
+result, err := jsonpatch.Apply(
+    `{"foo": "bar"}`,
+    `[{"op": "add", "path": "/baz", "value": "qux"}]`,
+)
+// result is a string: {"baz":"qux","foo":"bar"}
+
+patch, err := jsonpatch.CreatePatch(
+    `{"name": "Alice"}`,
+    `{"name": "Bob"}`,
+)
+```
+
+Custom types with an underlying `[]byte` or `string` type also work thanks to the `~` approximation constraint:
+
+```go
+type JSONDoc string
+
+doc := JSONDoc(`{"foo": "bar"}`)
+patch := JSONDoc(`[{"op": "add", "path": "/baz", "value": 1}]`)
+result, err := jsonpatch.Apply(doc, patch)  // result is JSONDoc
 ```
 
 ### Build Operations Programmatically

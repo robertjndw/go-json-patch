@@ -9,14 +9,15 @@ import (
 
 // CreatePatch generates a JSON Patch document (RFC 6902) that transforms
 // the original JSON document into the modified JSON document.
-// Both arguments must be valid JSON bytes.
-func CreatePatch(original, modified []byte) (Patch, error) {
+// Both arguments must be valid JSON encoded as []byte or string (or any type
+// with one of those underlying types).
+func CreatePatch[D Document](original, modified D) (Patch, error) {
 	var origDoc, modDoc interface{}
 
-	if err := json.Unmarshal(original, &origDoc); err != nil {
+	if err := json.Unmarshal(toBytes(original), &origDoc); err != nil {
 		return nil, fmt.Errorf("failed to decode original document: %w", err)
 	}
-	if err := json.Unmarshal(modified, &modDoc); err != nil {
+	if err := json.Unmarshal(toBytes(modified), &modDoc); err != nil {
 		return nil, fmt.Errorf("failed to decode modified document: %w", err)
 	}
 

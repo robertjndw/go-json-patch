@@ -21,6 +21,26 @@ import (
 	"fmt"
 )
 
+// Document defines the supported document types for JSON Patch operations.
+// It accepts raw JSON as []byte or string, as well as custom types with those
+// underlying types (e.g., type JSONDoc []byte).
+//
+// All generic functions that accept Document will preserve the caller's type in
+// the return value — pass a string, get a string back.
+type Document interface {
+	~[]byte | ~string
+}
+
+// toBytes converts a Document value to []byte for internal processing.
+func toBytes[D Document](d D) []byte {
+	return []byte(d)
+}
+
+// fromBytes converts raw JSON bytes back to the caller's Document type.
+func fromBytes[D Document](b []byte) D {
+	return D(b)
+}
+
 // OpType represents the type of JSON Patch operation.
 type OpType string
 
@@ -203,10 +223,11 @@ func (o Operation) GetValue() (interface{}, error) {
 	return v, nil
 }
 
-// DecodePatch parses a JSON Patch document from raw JSON bytes.
-func DecodePatch(patchJSON []byte) (Patch, error) {
+// DecodePatch parses a JSON Patch document from raw JSON.
+// The input can be []byte or string (or any type with one of those underlying types).
+func DecodePatch[D Document](patchJSON D) (Patch, error) {
 	var patch Patch
-	if err := json.Unmarshal(patchJSON, &patch); err != nil {
+	if err := json.Unmarshal(toBytes(patchJSON), &patch); err != nil {
 		return nil, fmt.Errorf("failed to decode patch document: %w", err)
 	}
 
