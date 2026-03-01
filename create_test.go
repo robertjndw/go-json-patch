@@ -378,8 +378,8 @@ func TestValidate_StructLiteral(t *testing.T) {
 	if err := op.Validate(); err != nil {
 		t.Fatalf("Validate() should succeed for well-formed struct literal: %v", err)
 	}
-	if !op.parsed {
-		t.Fatal("expected parsed to be true after Validate()")
+	if op.cache == nil {
+		t.Fatal("expected cache to be populated after Validate()")
 	}
 }
 
@@ -445,8 +445,12 @@ func TestValidate_CachesPointers(t *testing.T) {
 	if err := op.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if op.parsedPath.String() != "/a/b" {
-		t.Errorf("expected cached path /a/b, got %s", op.parsedPath.String())
+	if op.cache == nil || op.cache.parsedPath.String() != "/a/b" {
+		got := ""
+		if op.cache != nil {
+			got = op.cache.parsedPath.String()
+		}
+		t.Errorf("expected cached path /a/b, got %q", got)
 	}
 }
 
@@ -472,8 +476,8 @@ func TestCachedValue_DecodedPatchUsesCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !patch[0].parsed {
-		t.Fatal("expected parsed=true after DecodePatch")
+	if patch[0].cache == nil {
+		t.Fatal("expected cache to be populated after DecodePatch")
 	}
 	val, err := patch[0].GetValue()
 	if err != nil {

@@ -46,13 +46,13 @@ func applyPatchInternal(docJSON []byte, patch Patch, opts ApplyOptions) ([]byte,
 	}
 
 	var err error
-	for i, op := range patch {
-		doc, err = applyOperation(doc, op, opts)
+	for i := range patch {
+		doc, err = applyOperation(doc, &patch[i], opts)
 		if err != nil {
 			return nil, &InvalidOperationError{
 				Index: i,
-				Op:    op.Op,
-				Path:  op.Path,
+				Op:    patch[i].Op,
+				Path:  patch[i].Path,
 				Cause: err,
 			}
 		}
@@ -66,7 +66,7 @@ func applyPatchInternal(docJSON []byte, patch Patch, opts ApplyOptions) ([]byte,
 }
 
 // applyOperation applies a single operation to the document.
-func applyOperation(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
+func applyOperation(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
 	switch op.Op {
 	case OpAdd:
 		return applyAdd(doc, op, opts)
@@ -86,9 +86,11 @@ func applyOperation(doc interface{}, op Operation, opts ApplyOptions) (interface
 }
 
 // applyAdd implements the "add" operation (Section 4.1).
-func applyAdd(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	path := op.parsedPath
-	if !op.parsed {
+func applyAdd(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
 		var err error
 		path, err = ParsePointer(op.Path)
 		if err != nil {
@@ -109,9 +111,11 @@ func applyAdd(doc interface{}, op Operation, opts ApplyOptions) (interface{}, er
 }
 
 // applyRemove implements the "remove" operation (Section 4.2).
-func applyRemove(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	path := op.parsedPath
-	if !op.parsed {
+func applyRemove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
 		var err error
 		path, err = ParsePointer(op.Path)
 		if err != nil {
@@ -146,9 +150,11 @@ func isPathNotFound(err error) bool {
 
 // applyReplace implements the "replace" operation (Section 4.3).
 // Functionally identical to a "remove" followed by "add" at the same location.
-func applyReplace(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	path := op.parsedPath
-	if !op.parsed {
+func applyReplace(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
 		var err error
 		path, err = ParsePointer(op.Path)
 		if err != nil {
@@ -197,10 +203,12 @@ func applyReplace(doc interface{}, op Operation, opts ApplyOptions) (interface{}
 
 // applyMove implements the "move" operation (Section 4.4).
 // Functionally identical to "remove" from the source, then "add" at the target.
-func applyMove(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	fromPtr := op.parsedFrom
-	pathPtr := op.parsedPath
-	if !op.parsed {
+func applyMove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var fromPtr, pathPtr Pointer
+	if op.cache != nil {
+		fromPtr = op.cache.parsedFrom
+		pathPtr = op.cache.parsedPath
+	} else {
 		var err error
 		fromPtr, err = ParsePointer(op.From)
 		if err != nil {
@@ -240,10 +248,12 @@ func applyMove(doc interface{}, op Operation, opts ApplyOptions) (interface{}, e
 
 // applyCopy implements the "copy" operation (Section 4.5).
 // Functionally identical to an "add" operation using the value from "from".
-func applyCopy(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	fromPtr := op.parsedFrom
-	pathPtr := op.parsedPath
-	if !op.parsed {
+func applyCopy(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var fromPtr, pathPtr Pointer
+	if op.cache != nil {
+		fromPtr = op.cache.parsedFrom
+		pathPtr = op.cache.parsedPath
+	} else {
 		var err error
 		fromPtr, err = ParsePointer(op.From)
 		if err != nil {
@@ -270,9 +280,11 @@ func applyCopy(doc interface{}, op Operation, opts ApplyOptions) (interface{}, e
 }
 
 // applyTest implements the "test" operation (Section 4.6).
-func applyTest(doc interface{}, op Operation, opts ApplyOptions) (interface{}, error) {
-	path := op.parsedPath
-	if !op.parsed {
+func applyTest(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
 		var err error
 		path, err = ParsePointer(op.Path)
 		if err != nil {

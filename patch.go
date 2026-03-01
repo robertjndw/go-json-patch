@@ -39,6 +39,17 @@ const (
 	OpTest OpType = "test"
 )
 
+// operationCache holds pre-parsed fields for an Operation.
+// It is heap-allocated only when the operation has been validated via
+// Validate or DecodePatch, so operations produced internally by CreatePatch
+// carry zero extra overhead.
+type operationCache struct {
+	parsedPath    Pointer
+	parsedFrom    Pointer
+	parsedValue   interface{}
+	parsedValueOK bool // true once parsedValue is set (distinguishes cached-nil from not-yet-cached)
+}
+
 // Operation represents a single JSON Patch operation as defined in RFC 6902.
 type Operation struct {
 	// Op is the operation to perform. It MUST be one of "add", "remove",
@@ -68,17 +79,10 @@ type Operation struct {
 	// distinguishing between an absent key and an explicit null.
 	hasValue bool
 
-	// parsedPath is the cached parsed Pointer for Path, populated during validation.
-	parsedPath Pointer
-
-	// parsedFrom is the cached parsed Pointer for From, populated during validation.
-	parsedFrom Pointer
-
-	// parsedValue is the cached unmarshaled value, populated during validation.
-	parsedValue interface{}
-
-	// parsed indicates whether the cached fields have been populated.
-	parsed bool
+	// cache holds pre-parsed and pre-decoded fields when populated via
+	// Validate or DecodePatch. It is nil for operations that have not been
+	// validated (e.g., ops built by CreatePatch).
+	cache *operationCache
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for Operation to properly
@@ -244,14 +248,26 @@ func NewRemoveOperation(path string) Operation {
 	}
 }
 
-// GetValue returns the operation's value. If the value has been pre-parsed
-// (e.g. via DecodePatch), the cached value is returned directly.
-func (o Operation) GetValue() (interface{}, error) {
+// GetValue returns the operation's value. If the value has been pre-cached
+// (e.g. via DecodePatch or a previous apply), the cached value is returned
+// directly; otherwise it is parsed from the raw JSON and, when a cache is
+// present, stored for future calls (lazy caching).
+func (o *Operation) GetValue() (interface{}, error) {
 	if !o.HasValue() {
 		return nil, fmt.Errorf("operation has no value")
 	}
-	if o.parsed {
-		return o.parsedValue, nil
+	if o.cache != nil {
+		if o.cache.parsedValueOK {
+			return o.cache.parsedValue, nil
+		}
+		// Lazy-cache the value so repeated apply calls don't re-unmarshal.
+		var v interface{}
+		if err := json.Unmarshal(*o.Value, &v); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal value: %w", err)
+		}
+		o.cache.parsedValue = v
+		o.cache.parsedValueOK = true
+		return v, nil
 	}
 	var v interface{}
 	if err := json.Unmarshal(*o.Value, &v); err != nil {
@@ -267,9 +283,10 @@ func DecodePatch(patchJSON []byte) (Patch, error) {
 		return nil, fmt.Errorf("failed to decode patch document: %w", err)
 	}
 
-	// Validate and cache parsed fields for each operation.
+	// Validate and cache parsed pointer fields for each operation.
+	// Value fields are cached lazily on the first GetValue call.
 	for i := range patch {
-		if err := validateAndCacheOperation(&patch[i]); err != nil {
+		if err := validateAndCachePointersOnly(&patch[i]); err != nil {
 			return nil, fmt.Errorf("invalid operation at index %d: %w", i, err)
 		}
 	}
@@ -335,19 +352,72 @@ func validateAndCacheOperation(op *Operation) error {
 		return fmt.Errorf("unknown operation %q", op.Op)
 	}
 
-	// Cache parsed pointers.
-	op.parsedPath = pathPtr
-	op.parsedFrom = fromPtr
-
-	// Cache the unmarshaled value.
+	// Allocate cache and populate parsed pointers and the unmarshaled value.
+	c := &operationCache{
+		parsedPath: pathPtr,
+		parsedFrom: fromPtr,
+	}
 	if op.HasValue() {
 		var v interface{}
 		if err := json.Unmarshal(*op.Value, &v); err != nil {
 			return fmt.Errorf("failed to unmarshal value: %w", err)
 		}
-		op.parsedValue = v
+		c.parsedValue = v
+		c.parsedValueOK = true
+	}
+	op.cache = c
+	return nil
+}
+
+// validateAndCachePointersOnly validates the operation and caches only the
+// parsed Pointer values. The value field is NOT eagerly unmarshalled; it will
+// be lazily parsed on the first GetValue call. This keeps DecodePatch cheap
+// while preserving apply performance for repeated Apply on the same Patch.
+func validateAndCachePointersOnly(op *Operation) error {
+	if op.Op == "" {
+		return fmt.Errorf("operation must contain a non-empty \"op\" member")
+	}
+	if !op.hasPath {
+		return fmt.Errorf("%q operation must contain a \"path\" member", op.Op)
 	}
 
-	op.parsed = true
+	var pathPtr Pointer
+	var fromPtr Pointer
+	var err error
+
+	switch op.Op {
+	case OpAdd, OpReplace, OpTest:
+		if !op.HasValue() {
+			return fmt.Errorf("%q operation must contain a \"value\" member", op.Op)
+		}
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+	case OpRemove:
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+	case OpMove, OpCopy:
+		if !op.hasFrom {
+			return fmt.Errorf("%q operation must contain a \"from\" member", op.Op)
+		}
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
+			return fmt.Errorf("invalid path: %w", err)
+		}
+		fromPtr, err = ParsePointer(op.From)
+		if err != nil {
+			return fmt.Errorf("invalid from: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown operation %q", op.Op)
+	}
+
+	op.cache = &operationCache{
+		parsedPath: pathPtr,
+		parsedFrom: fromPtr,
+	}
 	return nil
 }
