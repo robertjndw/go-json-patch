@@ -3,7 +3,7 @@ package jsonpatch
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -93,7 +93,7 @@ func diffObjects(patch *Patch, path string, original, modified map[string]interf
 	for k := range keys {
 		sortedKeys = append(sortedKeys, k)
 	}
-	sort.Strings(sortedKeys)
+	slices.Sort(sortedKeys)
 
 	for _, key := range sortedKeys {
 		childPath := path + "/" + escapePointerToken(key)
