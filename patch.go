@@ -197,17 +197,12 @@ func (o *Operation) Validate() error {
 			o.hasPath = true
 		}
 	}
-	// Infer hasFrom when From is populated or the op requires it.
-	if !o.hasFrom {
-		if o.From != "" {
-			o.hasFrom = true
-		} else if o.Op == OpMove || o.Op == OpCopy {
-			// Empty from ("") is the root pointer — mark as explicitly set
-			// only if the caller actually set From to "".
-			// We can't distinguish uninitialised "" from intentional "" on a
-			// plain struct literal, so for move/copy we assume it's set.
-			o.hasFrom = true
-		}
+	// Infer hasFrom only when From is non-empty. Callers who intend the root
+	// pointer as the source must use NewMoveOperation/NewCopyOperation, which
+	// set hasFrom explicitly, to avoid silently treating a forgotten From field
+	// as a valid root-pointer source.
+	if !o.hasFrom && o.From != "" {
+		o.hasFrom = true
 	}
 	// Infer hasValue when Value is non-nil.
 	if !o.hasValue && o.Value != nil {

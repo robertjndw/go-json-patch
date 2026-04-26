@@ -147,9 +147,6 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if idx > len(node) {
-			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
-		}
 		// Insert at index
 		newArr := make([]interface{}, len(node)+1)
 		copy(newArr[:idx], node[:idx])
@@ -187,9 +184,6 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 		idx, err := resolveArrayIndex(key, len(node))
 		if err != nil {
 			return nil, err
-		}
-		if idx >= len(node) {
-			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
 		}
 		newArr := make([]interface{}, len(node)-1)
 		copy(newArr, node[:idx])

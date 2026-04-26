@@ -21,10 +21,11 @@ func Apply[D Document](docJSON, patchJSON D) (D, error) {
 }
 
 // ApplyWithOptions is like Apply but accepts functional options.
-func ApplyWithOptions(docJSON, patchJSON []byte, opts ...Option) ([]byte, error) {
+func ApplyWithOptions[D Document](docJSON, patchJSON D, opts ...Option) (D, error) {
+	var zero D
 	patch, err := DecodePatch(patchJSON)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	return ApplyPatchWithOptions(docJSON, patch, opts...)
 }
@@ -42,8 +43,13 @@ func ApplyPatch[D Document](docJSON D, patch Patch) (D, error) {
 }
 
 // ApplyPatchWithOptions is like ApplyPatch but accepts functional options.
-func ApplyPatchWithOptions(docJSON []byte, patch Patch, opts ...Option) ([]byte, error) {
-	return applyPatchInternal(docJSON, patch, buildOptions(opts))
+func ApplyPatchWithOptions[D Document](docJSON D, patch Patch, opts ...Option) (D, error) {
+	var zero D
+	result, err := applyPatchInternal(toBytes(docJSON), patch, buildOptions(opts))
+	if err != nil {
+		return zero, err
+	}
+	return fromBytes[D](result), nil
 }
 
 // applyPatchInternal is the shared implementation for ApplyPatch and ApplyPatchWithOptions.

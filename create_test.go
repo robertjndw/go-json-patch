@@ -395,14 +395,23 @@ func TestValidate_MoveStructLiteral(t *testing.T) {
 }
 
 func TestValidate_CopyStructLiteralWithRootFrom(t *testing.T) {
-	// From="" (root) should be accepted for copy.
+	// A struct literal with From="" is indistinguishable from a forgotten From
+	// field, so Validate must reject it. Callers who need root-pointer source
+	// must use NewCopyOperation("", "/dup") instead.
 	op := Operation{
 		Op:   OpCopy,
 		From: "",
 		Path: "/dup",
 	}
+	if err := op.Validate(); err == nil {
+		t.Fatal("Validate() should fail for copy with unset From field")
+	}
+}
+
+func TestValidate_CopyConstructorWithRootFrom(t *testing.T) {
+	op := NewCopyOperation("", "/dup")
 	if err := op.Validate(); err != nil {
-		t.Fatalf("Validate() should succeed for copy with root from: %v", err)
+		t.Fatalf("Validate() should succeed for copy constructed with root from: %v", err)
 	}
 }
 
