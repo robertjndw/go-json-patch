@@ -102,7 +102,7 @@ func (p Pointer) Evaluate(doc interface{}) (interface{}, error) {
 		case map[string]interface{}:
 			val, ok := node[token]
 			if !ok {
-				return nil, fmt.Errorf("key %q not found in object", token)
+				return nil, &PathNotFoundError{Path: p.String()}
 			}
 			current = val
 		case []interface{}:
@@ -147,9 +147,6 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if idx > len(node) {
-			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
-		}
 		// Insert at index
 		newArr := make([]interface{}, len(node)+1)
 		copy(newArr[:idx], node[:idx])
@@ -179,7 +176,7 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 	switch node := parent.(type) {
 	case map[string]interface{}:
 		if _, ok := node[key]; !ok {
-			return nil, fmt.Errorf("key %q not found in object", key)
+			return nil, &PathNotFoundError{Path: p.String()}
 		}
 		delete(node, key)
 		return doc, nil
@@ -187,9 +184,6 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 		idx, err := resolveArrayIndex(key, len(node))
 		if err != nil {
 			return nil, err
-		}
-		if idx >= len(node) {
-			return nil, fmt.Errorf("index %d out of bounds for array of length %d", idx, len(node))
 		}
 		newArr := make([]interface{}, len(node)-1)
 		copy(newArr, node[:idx])
@@ -248,7 +242,7 @@ func resolveArrayIndex(token string, arrayLen int) (int, error) {
 		return 0, fmt.Errorf("array index must not be negative: %d", idx)
 	}
 	if idx >= arrayLen {
-		return 0, fmt.Errorf("array index %d out of bounds (length %d)", idx, arrayLen)
+		return 0, &IndexOutOfBoundsError{Index: idx, Length: arrayLen}
 	}
 	return idx, nil
 }

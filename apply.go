@@ -20,56 +20,96 @@ func Apply[D Document](docJSON, patchJSON D) (D, error) {
 	return ApplyPatch(docJSON, patch)
 }
 
+// ApplyWithOptions is like Apply but accepts functional options.
+func ApplyWithOptions[D Document](docJSON, patchJSON D, opts ...Option) (D, error) {
+	var zero D
+	patch, err := DecodePatch(patchJSON)
+	if err != nil {
+		return zero, err
+	}
+	return ApplyPatchWithOptions(docJSON, patch, opts...)
+}
+
 // ApplyPatch applies a decoded Patch to a target JSON document.
 // The document can be []byte or string (or any type with one of those
 // underlying types). The return type matches the input type.
 func ApplyPatch[D Document](docJSON D, patch Patch) (D, error) {
 	var zero D
+	result, err := applyPatchInternal(toBytes(docJSON), patch, defaultOptions())
+	if err != nil {
+		return zero, err
+	}
+	return fromBytes[D](result), nil
+}
+
+// ApplyPatchWithOptions is like ApplyPatch but accepts functional options.
+func ApplyPatchWithOptions[D Document](docJSON D, patch Patch, opts ...Option) (D, error) {
+	var zero D
+	result, err := applyPatchInternal(toBytes(docJSON), patch, buildOptions(opts))
+	if err != nil {
+		return zero, err
+	}
+	return fromBytes[D](result), nil
+}
+
+// applyPatchInternal is the shared implementation for ApplyPatch and ApplyPatchWithOptions.
+func applyPatchInternal(docJSON []byte, patch Patch, opts ApplyOptions) ([]byte, error) {
 	var doc interface{}
-	if err := json.Unmarshal(toBytes(docJSON), &doc); err != nil {
-		return zero, fmt.Errorf("failed to decode target document: %w", err)
+	if err := json.Unmarshal(docJSON, &doc); err != nil {
+		return nil, fmt.Errorf("failed to decode target document: %w", err)
 	}
 
 	var err error
-	for i, op := range patch {
-		doc, err = applyOperation(doc, op)
+	for i := range patch {
+		doc, err = applyOperation(doc, &patch[i], opts)
 		if err != nil {
-			return zero, fmt.Errorf("operation %d (%s %s) failed: %w", i, op.Op, op.Path, err)
+			return nil, &InvalidOperationError{
+				Index: i,
+				Op:    patch[i].Op,
+				Path:  patch[i].Path,
+				Cause: err,
+			}
 		}
 	}
 
 	result, err := json.Marshal(doc)
 	if err != nil {
-		return zero, fmt.Errorf("failed to marshal result: %w", err)
+		return nil, fmt.Errorf("failed to marshal result: %w", err)
 	}
-	return fromBytes[D](result), nil
+	return result, nil
 }
 
 // applyOperation applies a single operation to the document.
-func applyOperation(doc interface{}, op Operation) (interface{}, error) {
+func applyOperation(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
 	switch op.Op {
 	case OpAdd:
-		return applyAdd(doc, op)
+		return applyAdd(doc, op, opts)
 	case OpRemove:
-		return applyRemove(doc, op)
+		return applyRemove(doc, op, opts)
 	case OpReplace:
-		return applyReplace(doc, op)
+		return applyReplace(doc, op, opts)
 	case OpMove:
-		return applyMove(doc, op)
+		return applyMove(doc, op, opts)
 	case OpCopy:
-		return applyCopy(doc, op)
+		return applyCopy(doc, op, opts)
 	case OpTest:
-		return applyTest(doc, op)
+		return applyTest(doc, op, opts)
 	default:
 		return nil, fmt.Errorf("unknown operation %q", op.Op)
 	}
 }
 
 // applyAdd implements the "add" operation (Section 4.1).
-func applyAdd(doc interface{}, op Operation) (interface{}, error) {
-	path, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyAdd(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
+		var err error
+		path, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	value, err := op.GetValue()
@@ -77,25 +117,65 @@ func applyAdd(doc interface{}, op Operation) (interface{}, error) {
 		return nil, err
 	}
 
+	if opts.EnsurePathExistsOnAdd {
+		doc = ensurePathExists(doc, path)
+	}
+
 	return path.Set(doc, value)
 }
 
 // applyRemove implements the "remove" operation (Section 4.2).
-func applyRemove(doc interface{}, op Operation) (interface{}, error) {
-	path, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyRemove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
+		var err error
+		path, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return path.Remove(doc)
+	result, err := path.Remove(doc)
+	if err != nil && opts.AllowMissingPathOnRemove {
+		if isMissingTarget(err) {
+			return doc, nil
+		}
+	}
+	return result, err
+}
+
+// isMissingTarget reports whether err represents a missing target location —
+// either a PathNotFoundError or an IndexOutOfBoundsError.
+// Both are treated as no-ops under AllowMissingPathOnRemove.
+func isMissingTarget(err error) bool {
+	for e := err; e != nil; {
+		switch e.(type) {
+		case *PathNotFoundError, *IndexOutOfBoundsError:
+			return true
+		}
+		u, ok := e.(interface{ Unwrap() error })
+		if !ok {
+			return false
+		}
+		e = u.Unwrap()
+	}
+	return false
 }
 
 // applyReplace implements the "replace" operation (Section 4.3).
 // Functionally identical to a "remove" followed by "add" at the same location.
-func applyReplace(doc interface{}, op Operation) (interface{}, error) {
-	path, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyReplace(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
+		var err error
+		path, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Verify the target exists
@@ -139,15 +219,21 @@ func applyReplace(doc interface{}, op Operation) (interface{}, error) {
 
 // applyMove implements the "move" operation (Section 4.4).
 // Functionally identical to "remove" from the source, then "add" at the target.
-func applyMove(doc interface{}, op Operation) (interface{}, error) {
-	fromPtr, err := ParsePointer(op.From)
-	if err != nil {
-		return nil, err
-	}
-
-	pathPtr, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyMove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var fromPtr, pathPtr Pointer
+	if op.cache != nil {
+		fromPtr = op.cache.parsedFrom
+		pathPtr = op.cache.parsedPath
+	} else {
+		var err error
+		fromPtr, err = ParsePointer(op.From)
+		if err != nil {
+			return nil, err
+		}
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The "from" location MUST NOT be a proper prefix of the "path" location
@@ -162,8 +248,9 @@ func applyMove(doc interface{}, op Operation) (interface{}, error) {
 		return nil, fmt.Errorf("\"from\" location does not exist: %w", err)
 	}
 
-	// Deep copy the value to avoid mutation issues
-	value = deepCopy(value)
+	// No deep copy needed: Remove either calls delete(node, key) for maps
+	// (which doesn't invalidate the value reference) or constructs a new
+	// backing slice for arrays — in both cases the original reference is valid.
 
 	// Remove from the source
 	doc, err = fromPtr.Remove(doc)
@@ -177,15 +264,21 @@ func applyMove(doc interface{}, op Operation) (interface{}, error) {
 
 // applyCopy implements the "copy" operation (Section 4.5).
 // Functionally identical to an "add" operation using the value from "from".
-func applyCopy(doc interface{}, op Operation) (interface{}, error) {
-	fromPtr, err := ParsePointer(op.From)
-	if err != nil {
-		return nil, err
-	}
-
-	pathPtr, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyCopy(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var fromPtr, pathPtr Pointer
+	if op.cache != nil {
+		fromPtr = op.cache.parsedFrom
+		pathPtr = op.cache.parsedPath
+	} else {
+		var err error
+		fromPtr, err = ParsePointer(op.From)
+		if err != nil {
+			return nil, err
+		}
+		pathPtr, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Get the value at the "from" location
@@ -194,7 +287,8 @@ func applyCopy(doc interface{}, op Operation) (interface{}, error) {
 		return nil, fmt.Errorf("\"from\" location does not exist: %w", err)
 	}
 
-	// Deep copy the value
+	// Deep copy the value — copy shares a value between two locations, so
+	// mutation through one path could affect the other.
 	value = deepCopy(value)
 
 	// Add at the target location
@@ -202,10 +296,16 @@ func applyCopy(doc interface{}, op Operation) (interface{}, error) {
 }
 
 // applyTest implements the "test" operation (Section 4.6).
-func applyTest(doc interface{}, op Operation) (interface{}, error) {
-	path, err := ParsePointer(op.Path)
-	if err != nil {
-		return nil, err
+func applyTest(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+	var path Pointer
+	if op.cache != nil {
+		path = op.cache.parsedPath
+	} else {
+		var err error
+		path, err = ParsePointer(op.Path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Get the value at the target location
@@ -222,8 +322,11 @@ func applyTest(doc interface{}, op Operation) (interface{}, error) {
 
 	// Compare values using deep equality
 	if !jsonEqual(actual, expected) {
-		return nil, fmt.Errorf("test failed: value at %q does not match: got %v, expected %v",
-			op.Path, actual, expected)
+		return nil, &TestFailedError{
+			Path:     op.Path,
+			Expected: expected,
+			Actual:   actual,
+		}
 	}
 
 	return doc, nil
@@ -232,8 +335,46 @@ func applyTest(doc interface{}, op Operation) (interface{}, error) {
 // jsonEqual compares two JSON-compatible values for equality per RFC 6902 Section 4.6.
 // All callers are expected to pass values already produced by encoding/json
 // (i.e., numbers are float64, maps are map[string]interface{}, etc.).
+// Uses a recursive type-switch to avoid reflection overhead.
 func jsonEqual(a, b interface{}) bool {
-	return reflect.DeepEqual(a, b)
+	switch av := a.(type) {
+	case nil:
+		return b == nil
+	case bool:
+		bv, ok := b.(bool)
+		return ok && av == bv
+	case float64:
+		bv, ok := b.(float64)
+		return ok && av == bv
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case map[string]interface{}:
+		bv, ok := b.(map[string]interface{})
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for k, va := range av {
+			vb, exists := bv[k]
+			if !exists || !jsonEqual(va, vb) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		bv, ok := b.([]interface{})
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i, va := range av {
+			if !jsonEqual(va, bv[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
+	}
 }
 
 // normalizeJSON normalizes a value by round-tripping through JSON serialization.
@@ -249,4 +390,38 @@ func normalizeJSON(v interface{}) interface{} {
 		return v
 	}
 	return out
+}
+
+// ensurePathExists creates intermediate objects along the pointer's parent
+// path so that a subsequent Set will not fail due to a missing parent.
+// Only object (map) intermediates are created; array intermediates are not.
+func ensurePathExists(doc interface{}, ptr Pointer) interface{} {
+	if ptr.IsRoot() {
+		return doc
+	}
+	if doc == nil {
+		doc = make(map[string]interface{})
+	}
+	if len(ptr.tokens) <= 1 {
+		return doc
+	}
+	current := doc
+	// Walk all tokens except the last (which is the key being added).
+	for _, token := range ptr.tokens[:len(ptr.tokens)-1] {
+		switch node := current.(type) {
+		case map[string]interface{}:
+			next, ok := node[token]
+			if !ok {
+				child := make(map[string]interface{})
+				node[token] = child
+				current = child
+			} else {
+				current = next
+			}
+		default:
+			// Cannot create intermediates inside arrays or scalars.
+			return doc
+		}
+	}
+	return doc
 }
