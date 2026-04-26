@@ -3,6 +3,7 @@ package jsonpatch
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 // Apply applies a JSON Patch document to a target JSON document.
@@ -364,8 +365,7 @@ func jsonEqual(a, b interface{}) bool {
 		}
 		return true
 	default:
-		// Fallback for unexpected types — should not occur with JSON-normalized data.
-		return a == b
+		return reflect.DeepEqual(a, b)
 	}
 }
 
@@ -388,11 +388,14 @@ func normalizeJSON(v interface{}) interface{} {
 // path so that a subsequent Set will not fail due to a missing parent.
 // Only object (map) intermediates are created; array intermediates are not.
 func ensurePathExists(doc interface{}, ptr Pointer) interface{} {
-	if ptr.IsRoot() || len(ptr.tokens) <= 1 {
+	if ptr.IsRoot() {
 		return doc
 	}
 	if doc == nil {
 		doc = make(map[string]interface{})
+	}
+	if len(ptr.tokens) <= 1 {
+		return doc
 	}
 	current := doc
 	// Walk all tokens except the last (which is the key being added).

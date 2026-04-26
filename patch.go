@@ -19,6 +19,7 @@ package jsonpatch
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // Document defines the supported document types for JSON Patch operations.
@@ -68,6 +69,7 @@ type operationCache struct {
 	parsedFrom    Pointer
 	parsedValue   interface{}
 	parsedValueOK bool // true once parsedValue is set (distinguishes cached-nil from not-yet-cached)
+	mu            sync.Mutex
 }
 
 // Operation represents a single JSON Patch operation as defined in RFC 6902.
@@ -277,6 +279,8 @@ func (o *Operation) GetValue() (interface{}, error) {
 		return nil, fmt.Errorf("operation has no value")
 	}
 	if o.cache != nil {
+		o.cache.mu.Lock()
+		defer o.cache.mu.Unlock()
 		if o.cache.parsedValueOK {
 			return o.cache.parsedValue, nil
 		}
