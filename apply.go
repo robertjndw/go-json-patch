@@ -139,18 +139,20 @@ func applyRemove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}
 
 	result, err := path.Remove(doc)
 	if err != nil && opts.AllowMissingPathOnRemove {
-		// Check if it's a path-not-found error; if so, treat as no-op.
-		if isPathNotFound(err) {
+		if isMissingTarget(err) {
 			return doc, nil
 		}
 	}
 	return result, err
 }
 
-// isPathNotFound reports whether err (or any wrapped error) is a PathNotFoundError.
-func isPathNotFound(err error) bool {
+// isMissingTarget reports whether err represents a missing target location —
+// either a PathNotFoundError or an IndexOutOfBoundsError.
+// Both are treated as no-ops under AllowMissingPathOnRemove.
+func isMissingTarget(err error) bool {
 	for e := err; e != nil; {
-		if _, ok := e.(*PathNotFoundError); ok {
+		switch e.(type) {
+		case *PathNotFoundError, *IndexOutOfBoundsError:
 			return true
 		}
 		u, ok := e.(interface{ Unwrap() error })

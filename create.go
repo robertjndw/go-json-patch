@@ -59,7 +59,7 @@ func stackToPath(stack *[]string) string {
 // diff recursively computes the differences between two JSON values
 // and appends the corresponding operations to the patch.
 func diff(patch *Patch, stack *[]string, original, modified interface{}) {
-	// Fast path for primitives — avoids type-switch overhead.
+	// Fast path for primitives — avoids deeper structural comparison when equal.
 	switch o := original.(type) {
 	case nil:
 		if modified == nil {

@@ -188,7 +188,9 @@ func (o Operation) HasFrom() bool {
 // For struct-literal operations (not created via NewOperation / DecodePatch),
 // Validate infers field presence: if Op is a recognised operation type then
 // hasPath is assumed true (root "" is a valid path for all RFC 6902 ops);
-// hasFrom is inferred when From is non-empty or Op is move/copy.
+// hasFrom is inferred only when From is non-empty. For move/copy operations
+// using the root pointer as the source (From == ""), use
+// NewMoveOperation/NewCopyOperation so that hasFrom is set explicitly.
 func (o *Operation) Validate() error {
 	// Infer hasPath for recognised ops when not already set (struct literal).
 	if !o.hasPath && o.Op != "" {
