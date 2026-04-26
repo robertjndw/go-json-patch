@@ -320,15 +320,26 @@ func MarshalPatch(patch Patch) ([]byte, error) {
 	return json.Marshal(patch)
 }
 
-// validateOperation checks that an operation has the required fields.
-// It does not cache parsed results; use validateAndCacheOperation for that.
-func validateOperation(op Operation) error {
-	return validateAndCacheOperation(&op)
+// validateAndCacheOperation validates the operation and eagerly caches all
+// parsed fields (pointers and unmarshaled value) for apply reuse.
+func validateAndCacheOperation(op *Operation) error {
+	return validateAndCache(op, true, true)
 }
 
-// validateAndCacheOperation validates the operation and caches parsed pointers
-// and the unmarshaled value so that apply* functions can reuse them.
-func validateAndCacheOperation(op *Operation) error {
+// validateAndCachePointersOnly validates the operation and caches only the
+// parsed Pointer values. The value field is lazily parsed on the first
+// GetValue call. This keeps DecodePatch cheap while preserving apply
+// performance for repeated Apply on the same Patch.
+func validateAndCachePointersOnly(op *Operation) error {
+	return validateAndCache(op, true, false)
+}
+
+// validateAndCache is the shared core for all three entry points above.
+// When cacheResult is false, pointers are parsed for validation only — no
+// allocation occurs. When cacheResult is true, parsed pointers are stored on
+// op.cache; if eagerValue is also true, the value JSON is unmarshaled and
+// cached as well.
+func validateAndCache(op *Operation, cacheResult, eagerValue bool) error {
 	// All operations MUST have exactly one "op" member (RFC 6902 Section 4).
 	if op.Op == "" {
 		return fmt.Errorf("operation must contain a non-empty \"op\" member")
@@ -373,12 +384,15 @@ func validateAndCacheOperation(op *Operation) error {
 		return fmt.Errorf("unknown operation %q", op.Op)
 	}
 
-	// Allocate cache and populate parsed pointers and the unmarshaled value.
+	if !cacheResult {
+		return nil
+	}
+
 	c := &operationCache{
 		parsedPath: pathPtr,
 		parsedFrom: fromPtr,
 	}
-	if op.HasValue() {
+	if eagerValue && op.HasValue() {
 		var v interface{}
 		if err := json.Unmarshal(*op.Value, &v); err != nil {
 			return fmt.Errorf("failed to unmarshal value: %w", err)
@@ -387,58 +401,5 @@ func validateAndCacheOperation(op *Operation) error {
 		c.parsedValueOK = true
 	}
 	op.cache = c
-	return nil
-}
-
-// validateAndCachePointersOnly validates the operation and caches only the
-// parsed Pointer values. The value field is NOT eagerly unmarshalled; it will
-// be lazily parsed on the first GetValue call. This keeps DecodePatch cheap
-// while preserving apply performance for repeated Apply on the same Patch.
-func validateAndCachePointersOnly(op *Operation) error {
-	if op.Op == "" {
-		return fmt.Errorf("operation must contain a non-empty \"op\" member")
-	}
-	if !op.hasPath {
-		return fmt.Errorf("%q operation must contain a \"path\" member", op.Op)
-	}
-
-	var pathPtr Pointer
-	var fromPtr Pointer
-	var err error
-
-	switch op.Op {
-	case OpAdd, OpReplace, OpTest:
-		if !op.HasValue() {
-			return fmt.Errorf("%q operation must contain a \"value\" member", op.Op)
-		}
-		pathPtr, err = ParsePointer(op.Path)
-		if err != nil {
-			return fmt.Errorf("invalid path: %w", err)
-		}
-	case OpRemove:
-		pathPtr, err = ParsePointer(op.Path)
-		if err != nil {
-			return fmt.Errorf("invalid path: %w", err)
-		}
-	case OpMove, OpCopy:
-		if !op.hasFrom {
-			return fmt.Errorf("%q operation must contain a \"from\" member", op.Op)
-		}
-		pathPtr, err = ParsePointer(op.Path)
-		if err != nil {
-			return fmt.Errorf("invalid path: %w", err)
-		}
-		fromPtr, err = ParsePointer(op.From)
-		if err != nil {
-			return fmt.Errorf("invalid from: %w", err)
-		}
-	default:
-		return fmt.Errorf("unknown operation %q", op.Op)
-	}
-
-	op.cache = &operationCache{
-		parsedPath: pathPtr,
-		parsedFrom: fromPtr,
-	}
 	return nil
 }
