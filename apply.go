@@ -5,15 +5,16 @@ import (
 	"fmt"
 )
 
-// Apply applies a JSON Patch document (as raw JSON bytes) to a target JSON
-// document (as raw JSON bytes). It returns the patched document as raw JSON
-// bytes. Operations are applied sequentially; if any operation fails, the
-// entire patch is aborted and an error is returned (atomic semantics per
-// RFC 5789).
-func Apply(docJSON, patchJSON []byte) ([]byte, error) {
+// Apply applies a JSON Patch document to a target JSON document.
+// Both arguments must be valid JSON encoded as []byte or string (or any type
+// with one of those underlying types). The return type matches the input type.
+// Operations are applied sequentially; if any operation fails, the entire
+// patch is aborted and an error is returned (atomic semantics per RFC 5789).
+func Apply[D Document](docJSON, patchJSON D) (D, error) {
+	var zero D
 	patch, err := DecodePatch(patchJSON)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	return ApplyPatch(docJSON, patch)
 }
@@ -27,10 +28,16 @@ func ApplyWithOptions(docJSON, patchJSON []byte, opts ...Option) ([]byte, error)
 	return ApplyPatchWithOptions(docJSON, patch, opts...)
 }
 
-// ApplyPatch applies a decoded Patch to a target JSON document (as raw JSON bytes).
-// It returns the patched document as raw JSON bytes.
-func ApplyPatch(docJSON []byte, patch Patch) ([]byte, error) {
-	return applyPatchInternal(docJSON, patch, defaultOptions())
+// ApplyPatch applies a decoded Patch to a target JSON document.
+// The document can be []byte or string (or any type with one of those
+// underlying types). The return type matches the input type.
+func ApplyPatch[D Document](docJSON D, patch Patch) (D, error) {
+	var zero D
+	result, err := applyPatchInternal(toBytes(docJSON), patch, defaultOptions())
+	if err != nil {
+		return zero, err
+	}
+	return fromBytes[D](result), nil
 }
 
 // ApplyPatchWithOptions is like ApplyPatch but accepts functional options.
