@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func mustParseJSON(s string) interface{} {
-	var v interface{}
+func mustParseJSON(s string) any {
+	var v any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		panic(err)
 	}
@@ -88,9 +88,9 @@ func TestPointerEvaluate(t *testing.T) {
 
 	tests := []struct {
 		pointer string
-		want    interface{}
+		want    any
 	}{
-		{"/foo", []interface{}{"bar", "baz"}},
+		{"/foo", []any{"bar", "baz"}},
 		{"/foo/0", "bar"},
 		{"/", float64(0)},
 		{"/a~1b", float64(1)},

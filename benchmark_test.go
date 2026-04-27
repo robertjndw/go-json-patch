@@ -39,9 +39,9 @@ func makeArray(n int) []byte {
 //
 //	{"a":{"a":{"a":… "leaf" …}}}
 func makeNestedObject(depth int) []byte {
-	var inner interface{} = "leaf"
+	var inner any = "leaf"
 	for range depth {
-		inner = map[string]interface{}{"a": inner}
+		inner = map[string]any{"a": inner}
 	}
 	b, _ := json.Marshal(inner)
 	return b
@@ -49,7 +49,7 @@ func makeNestedObject(depth int) []byte {
 
 // modifyObject changes roughly half the keys in the object.
 func modifyObject(original []byte) []byte {
-	var m map[string]interface{}
+	var m map[string]any
 	_ = json.Unmarshal(original, &m)
 	i := 0
 	for k := range m {
@@ -283,11 +283,11 @@ func BenchmarkCreatePatch_DeepNested(b *testing.B) {
 	for _, d := range depths {
 		original := makeNestedObject(d)
 		// Change the innermost value.
-		var doc interface{}
+		var doc any
 		_ = json.Unmarshal(original, &doc)
 		cur := doc
 		for i := range d {
-			m := cur.(map[string]interface{})
+			m := cur.(map[string]any)
 			if i == d-1 {
 				m["a"] = "changed"
 			} else {
@@ -331,9 +331,9 @@ func BenchmarkDecodePatch_Small(b *testing.B) {
 func BenchmarkDecodePatch_Large(b *testing.B) {
 	counts := []int{10, 50, 100}
 	for _, n := range counts {
-		ops := make([]map[string]interface{}, n)
+		ops := make([]map[string]any, n)
 		for i := range n {
-			ops[i] = map[string]interface{}{
+			ops[i] = map[string]any{
 				"op":    "add",
 				"path":  "/key_" + strconv.Itoa(i),
 				"value": i,
@@ -408,9 +408,9 @@ func BenchmarkParsePointer_WithEscapes(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func BenchmarkPointerEvaluate(b *testing.B) {
-	doc := map[string]interface{}{
-		"a": map[string]interface{}{
-			"b": map[string]interface{}{
+	doc := map[string]any{
+		"a": map[string]any{
+			"b": map[string]any{
 				"c": "value",
 			},
 		},
@@ -430,9 +430,9 @@ func BenchmarkPointerSet(b *testing.B) {
 	ptr, _ := ParsePointer("/a/b/c")
 	b.ResetTimer()
 	for b.Loop() {
-		doc := map[string]interface{}{
-			"a": map[string]interface{}{
-				"b": map[string]interface{}{
+		doc := map[string]any{
+			"a": map[string]any{
+				"b": map[string]any{
 					"c": "old",
 				},
 			},
@@ -449,9 +449,9 @@ func BenchmarkPointerRemove(b *testing.B) {
 	ptr, _ := ParsePointer("/a/b/c")
 	b.ResetTimer()
 	for b.Loop() {
-		doc := map[string]interface{}{
-			"a": map[string]interface{}{
-				"b": map[string]interface{}{
+		doc := map[string]any{
+			"a": map[string]any{
+				"b": map[string]any{
 					"c": "value",
 				},
 			},

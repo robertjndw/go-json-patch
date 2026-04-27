@@ -13,7 +13,7 @@ import (
 // Both arguments must be valid JSON encoded as []byte or string (or any type
 // with one of those underlying types).
 func CreatePatch[D Document](original, modified D) (Patch, error) {
-	var origDoc, modDoc interface{}
+	var origDoc, modDoc any
 
 	if err := json.Unmarshal(toBytes(original), &origDoc); err != nil {
 		return nil, fmt.Errorf("failed to decode original document: %w", err)
@@ -29,7 +29,7 @@ func CreatePatch[D Document](original, modified D) (Patch, error) {
 }
 
 // CreatePatchFromValues generates a JSON Patch from two already-parsed JSON values.
-func CreatePatchFromValues(original, modified interface{}) Patch {
+func CreatePatchFromValues(original, modified any) Patch {
 	patch := Patch{}
 	stack := make([]string, 0, 16)
 	diff(&patch, &stack, normalizeJSON(original), normalizeJSON(modified))
@@ -58,7 +58,7 @@ func stackToPath(stack *[]string) string {
 
 // diff recursively computes the differences between two JSON values
 // and appends the corresponding operations to the patch.
-func diff(patch *Patch, stack *[]string, original, modified interface{}) {
+func diff(patch *Patch, stack *[]string, original, modified any) {
 	// Fast path for primitives — avoids deeper structural comparison when equal.
 	switch o := original.(type) {
 	case nil:
@@ -84,11 +84,11 @@ func diff(patch *Patch, stack *[]string, original, modified interface{}) {
 		}
 	}
 
-	origObj, origIsObj := original.(map[string]interface{})
-	modObj, modIsObj := modified.(map[string]interface{})
+	origObj, origIsObj := original.(map[string]any)
+	modObj, modIsObj := modified.(map[string]any)
 
-	origArr, origIsArr := original.([]interface{})
-	modArr, modIsArr := modified.([]interface{})
+	origArr, origIsArr := original.([]any)
+	modArr, modIsArr := modified.([]any)
 
 	switch {
 	case origIsObj && modIsObj:
@@ -102,7 +102,7 @@ func diff(patch *Patch, stack *[]string, original, modified interface{}) {
 }
 
 // diffObjects computes the diff between two JSON objects.
-func diffObjects(patch *Patch, stack *[]string, original, modified map[string]interface{}) {
+func diffObjects(patch *Patch, stack *[]string, original, modified map[string]any) {
 	// Collect all keys from both objects for deterministic ordering
 	keys := make(map[string]bool)
 	for k := range original {
@@ -140,7 +140,7 @@ func diffObjects(patch *Patch, stack *[]string, original, modified map[string]in
 
 // diffArrays computes the diff between two JSON arrays.
 // Uses a simple approach: compare element by element, then handle length differences.
-func diffArrays(patch *Patch, stack *[]string, original, modified []interface{}) {
+func diffArrays(patch *Patch, stack *[]string, original, modified []any) {
 	commonLen := len(original)
 	if len(modified) < commonLen {
 		commonLen = len(modified)
@@ -175,7 +175,7 @@ func diffArrays(patch *Patch, stack *[]string, original, modified []interface{})
 }
 
 // newAddOp creates an "add" operation.
-func newAddOp(path string, value interface{}) Operation {
+func newAddOp(path string, value any) Operation {
 	op, _ := NewOperation(OpAdd, path, value)
 	return op
 }
@@ -190,7 +190,7 @@ func newRemoveOp(path string) Operation {
 }
 
 // newReplaceOp creates a "replace" operation.
-func newReplaceOp(path string, value interface{}) Operation {
+func newReplaceOp(path string, value any) Operation {
 	op, _ := NewOperation(OpReplace, path, value)
 	return op
 }

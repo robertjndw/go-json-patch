@@ -54,7 +54,7 @@ func ApplyPatchWithOptions[D Document](docJSON D, patch Patch, opts ...Option) (
 
 // applyPatchInternal is the shared implementation for ApplyPatch and ApplyPatchWithOptions.
 func applyPatchInternal(docJSON []byte, patch Patch, opts ApplyOptions) ([]byte, error) {
-	var doc interface{}
+	var doc any
 	if err := json.Unmarshal(docJSON, &doc); err != nil {
 		return nil, fmt.Errorf("failed to decode target document: %w", err)
 	}
@@ -80,7 +80,7 @@ func applyPatchInternal(docJSON []byte, patch Patch, opts ApplyOptions) ([]byte,
 }
 
 // applyOperation applies a single operation to the document.
-func applyOperation(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyOperation(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	switch op.Op {
 	case OpAdd:
 		return applyAdd(doc, op, opts)
@@ -100,7 +100,7 @@ func applyOperation(doc interface{}, op *Operation, opts ApplyOptions) (interfac
 }
 
 // applyAdd implements the "add" operation (Section 4.1).
-func applyAdd(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyAdd(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var path Pointer
 	if op.cache != nil {
 		path = op.cache.parsedPath
@@ -125,7 +125,7 @@ func applyAdd(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, e
 }
 
 // applyRemove implements the "remove" operation (Section 4.2).
-func applyRemove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyRemove(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var path Pointer
 	if op.cache != nil {
 		path = op.cache.parsedPath
@@ -166,7 +166,7 @@ func isMissingTarget(err error) bool {
 
 // applyReplace implements the "replace" operation (Section 4.3).
 // Functionally identical to a "remove" followed by "add" at the same location.
-func applyReplace(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyReplace(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var path Pointer
 	if op.cache != nil {
 		path = op.cache.parsedPath
@@ -202,10 +202,10 @@ func applyReplace(doc interface{}, op *Operation, opts ApplyOptions) (interface{
 	key := path.Last()
 
 	switch node := parent.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		node[key] = value
 		return doc, nil
-	case []interface{}:
+	case []any:
 		idx, err := resolveArrayIndex(key, len(node))
 		if err != nil {
 			return nil, err
@@ -219,7 +219,7 @@ func applyReplace(doc interface{}, op *Operation, opts ApplyOptions) (interface{
 
 // applyMove implements the "move" operation (Section 4.4).
 // Functionally identical to "remove" from the source, then "add" at the target.
-func applyMove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyMove(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var fromPtr, pathPtr Pointer
 	if op.cache != nil {
 		fromPtr = op.cache.parsedFrom
@@ -264,7 +264,7 @@ func applyMove(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, 
 
 // applyCopy implements the "copy" operation (Section 4.5).
 // Functionally identical to an "add" operation using the value from "from".
-func applyCopy(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyCopy(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var fromPtr, pathPtr Pointer
 	if op.cache != nil {
 		fromPtr = op.cache.parsedFrom
@@ -296,7 +296,7 @@ func applyCopy(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, 
 }
 
 // applyTest implements the "test" operation (Section 4.6).
-func applyTest(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, error) {
+func applyTest(doc any, op *Operation, opts ApplyOptions) (any, error) {
 	var path Pointer
 	if op.cache != nil {
 		path = op.cache.parsedPath
@@ -334,9 +334,9 @@ func applyTest(doc interface{}, op *Operation, opts ApplyOptions) (interface{}, 
 
 // jsonEqual compares two JSON-compatible values for equality per RFC 6902 Section 4.6.
 // All callers are expected to pass values already produced by encoding/json
-// (i.e., numbers are float64, maps are map[string]interface{}, etc.).
+// (i.e., numbers are float64, maps are map[string]any, etc.).
 // Uses a recursive type-switch to avoid reflection overhead.
-func jsonEqual(a, b interface{}) bool {
+func jsonEqual(a, b any) bool {
 	switch av := a.(type) {
 	case nil:
 		return b == nil
@@ -349,8 +349,8 @@ func jsonEqual(a, b interface{}) bool {
 	case string:
 		bv, ok := b.(string)
 		return ok && av == bv
-	case map[string]interface{}:
-		bv, ok := b.(map[string]interface{})
+	case map[string]any:
+		bv, ok := b.(map[string]any)
 		if !ok || len(av) != len(bv) {
 			return false
 		}
@@ -361,8 +361,8 @@ func jsonEqual(a, b interface{}) bool {
 			}
 		}
 		return true
-	case []interface{}:
-		bv, ok := b.([]interface{})
+	case []any:
+		bv, ok := b.([]any)
 		if !ok || len(av) != len(bv) {
 			return false
 		}
@@ -380,12 +380,12 @@ func jsonEqual(a, b interface{}) bool {
 // normalizeJSON normalizes a value by round-tripping through JSON serialization.
 // This ensures consistent types (e.g., all numbers become float64).
 // Used by CreatePatchFromValues to normalize caller-supplied values.
-func normalizeJSON(v interface{}) interface{} {
+func normalizeJSON(v any) any {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return v
 	}
-	var out interface{}
+	var out any
 	if err := json.Unmarshal(b, &out); err != nil {
 		return v
 	}
@@ -395,12 +395,12 @@ func normalizeJSON(v interface{}) interface{} {
 // ensurePathExists creates intermediate objects along the pointer's parent
 // path so that a subsequent Set will not fail due to a missing parent.
 // Only object (map) intermediates are created; array intermediates are not.
-func ensurePathExists(doc interface{}, ptr Pointer) interface{} {
+func ensurePathExists(doc any, ptr Pointer) any {
 	if ptr.IsRoot() {
 		return doc
 	}
 	if doc == nil {
-		doc = make(map[string]interface{})
+		doc = make(map[string]any)
 	}
 	if len(ptr.tokens) <= 1 {
 		return doc
@@ -409,10 +409,10 @@ func ensurePathExists(doc interface{}, ptr Pointer) interface{} {
 	// Walk all tokens except the last (which is the key being added).
 	for _, token := range ptr.tokens[:len(ptr.tokens)-1] {
 		switch node := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			next, ok := node[token]
 			if !ok {
-				child := make(map[string]interface{})
+				child := make(map[string]any)
 				node[token] = child
 				current = child
 			} else {

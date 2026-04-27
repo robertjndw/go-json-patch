@@ -5,8 +5,8 @@ import "fmt"
 // TestFailedError is returned when a "test" operation finds a mismatch.
 type TestFailedError struct {
 	Path     string
-	Expected interface{}
-	Actual   interface{}
+	Expected any
+	Actual   any
 }
 
 func (e *TestFailedError) Error() string {

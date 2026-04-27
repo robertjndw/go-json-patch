@@ -95,17 +95,17 @@ func (p Pointer) IsPrefixOf(other Pointer) bool {
 }
 
 // Evaluate resolves the pointer against a JSON document and returns the value.
-func (p Pointer) Evaluate(doc interface{}) (interface{}, error) {
+func (p Pointer) Evaluate(doc any) (any, error) {
 	current := doc
 	for _, token := range p.tokens {
 		switch node := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			val, ok := node[token]
 			if !ok {
 				return nil, &PathNotFoundError{Path: p.String()}
 			}
 			current = val
-		case []interface{}:
+		case []any:
 			idx, err := resolveArrayIndex(token, len(node))
 			if err != nil {
 				return nil, err
@@ -120,7 +120,7 @@ func (p Pointer) Evaluate(doc interface{}) (interface{}, error) {
 
 // Set sets the value at the location referenced by the pointer in the document.
 // It returns the modified document.
-func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
+func (p Pointer) Set(doc any, value any) (any, error) {
 	if p.IsRoot() {
 		return value, nil
 	}
@@ -134,10 +134,10 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 	key := p.Last()
 
 	switch node := parent.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		node[key] = value
 		return doc, nil
-	case []interface{}:
+	case []any:
 		if key == "-" {
 			// Append to the end of the array
 			newArr := append(node, value)
@@ -148,7 +148,7 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 			return nil, err
 		}
 		// Insert at index
-		newArr := make([]interface{}, len(node)+1)
+		newArr := make([]any, len(node)+1)
 		copy(newArr[:idx], node[:idx])
 		newArr[idx] = value
 		copy(newArr[idx+1:], node[idx:])
@@ -160,7 +160,7 @@ func (p Pointer) Set(doc interface{}, value interface{}) (interface{}, error) {
 
 // Remove removes the value at the location referenced by the pointer.
 // It returns the modified document.
-func (p Pointer) Remove(doc interface{}) (interface{}, error) {
+func (p Pointer) Remove(doc any) (any, error) {
 	if p.IsRoot() {
 		return nil, fmt.Errorf("cannot remove root document")
 	}
@@ -174,18 +174,18 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 	key := p.Last()
 
 	switch node := parent.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		if _, ok := node[key]; !ok {
 			return nil, &PathNotFoundError{Path: p.String()}
 		}
 		delete(node, key)
 		return doc, nil
-	case []interface{}:
+	case []any:
 		idx, err := resolveArrayIndex(key, len(node))
 		if err != nil {
 			return nil, err
 		}
-		newArr := make([]interface{}, len(node)-1)
+		newArr := make([]any, len(node)-1)
 		copy(newArr, node[:idx])
 		copy(newArr[idx:], node[idx+1:])
 		return parentPtr.replaceValue(doc, newArr)
@@ -195,7 +195,7 @@ func (p Pointer) Remove(doc interface{}) (interface{}, error) {
 }
 
 // replaceValue replaces the value at this pointer's location within the document.
-func (p Pointer) replaceValue(doc interface{}, newValue interface{}) (interface{}, error) {
+func (p Pointer) replaceValue(doc any, newValue any) (any, error) {
 	if p.IsRoot() {
 		return newValue, nil
 	}
@@ -208,10 +208,10 @@ func (p Pointer) replaceValue(doc interface{}, newValue interface{}) (interface{
 	key := p.Last()
 
 	switch node := parent.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		node[key] = newValue
 		return doc, nil
-	case []interface{}:
+	case []any:
 		idx, err := resolveArrayIndex(key, len(node))
 		if err != nil {
 			return nil, err
@@ -291,16 +291,16 @@ func unescapePointerToken(token string) string {
 // deepCopy creates a deep copy of a JSON-compatible value.
 // It recursively copies maps and slices; primitives (string, float64, bool, nil)
 // are immutable and returned as-is.
-func deepCopy(v interface{}) interface{} {
+func deepCopy(v any) any {
 	switch val := v.(type) {
-	case map[string]interface{}:
-		m := make(map[string]interface{}, len(val))
+	case map[string]any:
+		m := make(map[string]any, len(val))
 		for k, v := range val {
 			m[k] = deepCopy(v)
 		}
 		return m
-	case []interface{}:
-		a := make([]interface{}, len(val))
+	case []any:
+		a := make([]any, len(val))
 		for i, v := range val {
 			a[i] = deepCopy(v)
 		}

@@ -101,7 +101,7 @@ func mustOp(op jsonpatch.Operation, err error) jsonpatch.Operation {
 }
 
 func printJSON(data []byte) {
-	var v interface{}
+	var v any
 	if err := json.Unmarshal(data, &v); err != nil {
 		fmt.Println(string(data))
 		return

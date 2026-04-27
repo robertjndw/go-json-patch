@@ -67,7 +67,7 @@ const (
 type operationCache struct {
 	parsedPath    Pointer
 	parsedFrom    Pointer
-	parsedValue   interface{}
+	parsedValue   any
 	parsedValueOK bool // true once parsedValue is set (distinguishes cached-nil from not-yet-cached)
 	mu            sync.Mutex
 }
@@ -219,7 +219,7 @@ type Patch []Operation
 // NewOperation creates a new Operation with the given parameters.
 // Pass a non-nil pointer to indicate the value is present (including JSON null).
 // To create an operation without a value (e.g., remove), pass nil.
-func NewOperation(op OpType, path string, value interface{}) (Operation, error) {
+func NewOperation(op OpType, path string, value any) (Operation, error) {
 	o := Operation{
 		Op:       op,
 		Path:     path,
@@ -271,7 +271,7 @@ func NewRemoveOperation(path string) Operation {
 // (e.g. via DecodePatch or a previous apply), the cached value is returned
 // directly; otherwise it is parsed from the raw JSON and, when a cache is
 // present, stored for future calls (lazy caching).
-func (o *Operation) GetValue() (interface{}, error) {
+func (o *Operation) GetValue() (any, error) {
 	if !o.HasValue() {
 		return nil, fmt.Errorf("operation has no value")
 	}
@@ -282,7 +282,7 @@ func (o *Operation) GetValue() (interface{}, error) {
 			return o.cache.parsedValue, nil
 		}
 		// Lazy-cache the value so repeated apply calls don't re-unmarshal.
-		var v interface{}
+		var v any
 		if err := json.Unmarshal(*o.Value, &v); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal value: %w", err)
 		}
@@ -290,7 +290,7 @@ func (o *Operation) GetValue() (interface{}, error) {
 		o.cache.parsedValueOK = true
 		return v, nil
 	}
-	var v interface{}
+	var v any
 	if err := json.Unmarshal(*o.Value, &v); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal value: %w", err)
 	}
@@ -394,7 +394,7 @@ func validateAndCache(op *Operation, cacheResult, eagerValue bool) error {
 		parsedFrom: fromPtr,
 	}
 	if eagerValue && op.HasValue() {
-		var v interface{}
+		var v any
 		if err := json.Unmarshal(*op.Value, &v); err != nil {
 			return fmt.Errorf("failed to unmarshal value: %w", err)
 		}

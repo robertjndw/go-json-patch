@@ -256,7 +256,7 @@ func TestMarshalPatch(t *testing.T) {
 	}
 
 	// Verify it's valid JSON
-	var result []map[string]interface{}
+	var result []map[string]any
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestCachedValue_DecodedPatchUsesCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, ok := val.(map[string]interface{})
+	m, ok := val.(map[string]any)
 	if !ok {
 		t.Fatalf("expected map, got %T", val)
 	}

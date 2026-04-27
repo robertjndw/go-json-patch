@@ -543,7 +543,7 @@ func TestApply_A13_InvalidPatchDocument(t *testing.T) {
 // assertJSONEqual compares two JSON strings for semantic equality.
 func assertJSONEqual(t *testing.T, expected, actual string) {
 	t.Helper()
-	var e, a interface{}
+	var e, a any
 	if err := json.Unmarshal([]byte(expected), &e); err != nil {
 		t.Fatalf("invalid expected JSON: %v", err)
 	}
@@ -761,9 +761,9 @@ func TestJsonEqual_String(t *testing.T) {
 }
 
 func TestJsonEqual_Map(t *testing.T) {
-	a := map[string]interface{}{"x": float64(1), "y": "two"}
-	b := map[string]interface{}{"x": float64(1), "y": "two"}
-	c := map[string]interface{}{"x": float64(1)}
+	a := map[string]any{"x": float64(1), "y": "two"}
+	b := map[string]any{"x": float64(1), "y": "two"}
+	c := map[string]any{"x": float64(1)}
 
 	if !jsonEqual(a, b) {
 		t.Error("identical maps should be equal")
@@ -774,9 +774,9 @@ func TestJsonEqual_Map(t *testing.T) {
 }
 
 func TestJsonEqual_Slice(t *testing.T) {
-	a := []interface{}{float64(1), "two", true}
-	b := []interface{}{float64(1), "two", true}
-	c := []interface{}{float64(1), "two", false}
+	a := []any{float64(1), "two", true}
+	b := []any{float64(1), "two", true}
+	c := []any{float64(1), "two", false}
 
 	if !jsonEqual(a, b) {
 		t.Error("identical slices should be equal")
@@ -787,11 +787,11 @@ func TestJsonEqual_Slice(t *testing.T) {
 }
 
 func TestJsonEqual_NestedStructures(t *testing.T) {
-	a := map[string]interface{}{
-		"arr": []interface{}{float64(1), map[string]interface{}{"k": "v"}},
+	a := map[string]any{
+		"arr": []any{float64(1), map[string]any{"k": "v"}},
 	}
-	b := map[string]interface{}{
-		"arr": []interface{}{float64(1), map[string]interface{}{"k": "v"}},
+	b := map[string]any{
+		"arr": []any{float64(1), map[string]any{"k": "v"}},
 	}
 	if !jsonEqual(a, b) {
 		t.Error("deeply nested equal structures should match")
